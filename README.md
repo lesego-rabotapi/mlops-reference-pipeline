@@ -12,44 +12,60 @@ be built, tested, documented, and operated as part of a reliable system.
 ## Current Scope
 
 AWS account access is unavailable, so direct AWS implementation is out of scope
-for this version of the project. The pipeline will still be completed with
-production-style engineering practices using local and portable components:
+for this version of the project. The pipeline is completed with production-style
+engineering practices using local and portable components:
 
 - Local artifact storage instead of S3
-- Local logs and generated reports instead of CloudWatch
-- Local or containerized FastAPI serving instead of EC2 or Lambda
-- CI-ready commands instead of cloud deployment jobs
-- Cloud-portable design documentation instead of Terraform-provisioned AWS
-  infrastructure
+- Docker for portable runtime packaging instead of EC2 or Lambda
+- FastAPI inference service containerized with Docker
+- Prometheus and Grafana for local observability instead of CloudWatch
+- GitHub Actions for CI instead of CodePipeline
+- Trivy for container security scanning in CI
+- Cloud-portable architecture documentation instead of live Terraform infrastructure
 
 This keeps the project honest and complete: it demonstrates the same MLOps
 engineering concepts without depending on unavailable cloud access.
 
-## Current Pipeline Stages
+## Tooling
+
+| Layer | Tool | Role in this project |
+| --- | --- | --- |
+| Pipeline | Python + scikit-learn | Validation, feature engineering, training |
+| Experiment tracking | MLflow | Parameter, metric, and artifact logging |
+| Serving | FastAPI + Uvicorn | Inference API with health and predict endpoints |
+| Containers | Docker | Portable runtime for the inference service |
+| CI | GitHub Actions | Automated install, test, and security scan |
+| Security scanning | Trivy | Container image vulnerability scanning in CI |
+| Metrics | Prometheus | Scrapes metrics from the FastAPI service |
+| Dashboards | Grafana | Visualises Prometheus metrics locally |
+| Orchestration | docker-compose | Brings up FastAPI, Prometheus, and Grafana together |
+
+## Pipeline Stages
 
 ```text
 Raw Data
-  -> Validation
+  -> Validation            (src/validation/)
   -> Validated Dataset
-  -> Feature Engineering
-  -> Processed Features
-  -> Training
-  -> Experiment Tracking
-  -> Local Serving
-  -> Monitoring
+  -> Feature Engineering   (src/features/)
+  -> Processed Features + Preprocessor Artifact
+  -> Training              (src/training/)
+  -> Model Artifact + Evaluation Report + MLflow Run
+  -> Inference API         (src/serving/)
+  -> Docker Image
+  -> CI (GitHub Actions + Trivy)
+  -> Local Observability   (Prometheus + Grafana via docker-compose)
 ```
 
-Implemented stages currently include:
+Implemented stages:
 
-- Data validation structure
-- Reusable validation rules
-- Feature engineering with scikit-learn pipelines
-- Preprocessing artifact persistence
-- Feature engineering tests
+- Data validation with reusable rule registry and JSON audit reports
+- Feature engineering with scikit-learn pipelines and artifact persistence
+- Feature engineering tests including leakage detection
+- Training and evaluation with MLflow tracking, metrics, artifact manifests,
+  and training tests
 
-Planned maturity areas include training, MLflow tracking, FastAPI serving,
-Dockerization, CI/CD, local monitoring, governance documentation, and
-cloud-portable deployment notes.
+Planned stages: FastAPI serving, Docker, GitHub Actions CI with Trivy, and
+Prometheus/Grafana observability.
 
 ## Mentorship And Engineering Standards
 
@@ -60,6 +76,7 @@ plan in:
 - [docs/MENTORSHIP_OPERATING_PLAN.md](docs/MENTORSHIP_OPERATING_PLAN.md)
 - [docs/PROJECT_SCOPE.md](docs/PROJECT_SCOPE.md)
 - [docs/LOCAL_COMPLETION_GUIDE.md](docs/LOCAL_COMPLETION_GUIDE.md)
+- [docs/BUILD.md](docs/BUILD.md)
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 These documents define how decisions should be explained, how code should be
@@ -72,5 +89,10 @@ implementation should connect back to production MLOps concerns.
 make install
 make validate
 make features
+make train
 make test
+
+# Once serving and observability stages are complete:
+make serve          # start FastAPI locally
+docker compose up   # start FastAPI + Prometheus + Grafana
 ```

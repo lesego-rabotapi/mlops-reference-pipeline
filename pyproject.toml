@@ -1,0 +1,16 @@
+# Why this file exists: defines an installable, local Python project.
+# Responsible for: editable-install metadata and package discovery.
+# Must not: duplicate runtime dependency pins from requirements.txt.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-mlops-reference-pipeline"
+version = "0.1.0"
+description = "Local-first, cloud-portable MLOps reference pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+include = ["src*"]

@@ -91,8 +91,11 @@ use this sequence unless the user explicitly asks for a shorter response.
 - Favor maintainable, local-first, cloud-portable designs over unnecessary
   complexity.
 - Explain every major tool in project context: pandas, scikit-learn, Great
-  Expectations, MLflow, FastAPI, pytest, Docker, GitHub Actions, Terraform, and
-  cloud service equivalents.
+  Expectations, MLflow, FastAPI, pytest, Docker, docker-compose, GitHub Actions,
+  Prometheus, Grafana, Trivy, and cloud service equivalents.
+- When introducing a tool, explain why it was chosen over alternatives, what
+  problem it solves at this project's scale, and what the AWS equivalent would
+  be in a production deployment.
 
 ## Review Standards
 

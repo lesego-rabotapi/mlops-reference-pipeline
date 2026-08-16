@@ -1,4 +1,7 @@
-.PHONY: install validate features train test test-validation test-features pipeline
+# Why this file exists: exposes repeatable local and CI pipeline commands.
+# Responsible for: composing independently runnable stage entrypoints.
+# Must not: contain pipeline logic or bypass a stage's own error handling.
+.PHONY: install validate features train test test-validation test-features test-training pipeline
 
 install:
 	pip install -r requirements.txt
@@ -21,5 +24,8 @@ test-validation:
 test-features:
 	pytest tests/test_build_features.py -v --tb=short
 
-pipeline: validate features
+test-training:
+	pytest tests/test_train_model.py -v --tb=short
+
+pipeline: validate features train
 	@echo "Pipeline stages complete."

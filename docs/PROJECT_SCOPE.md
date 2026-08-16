@@ -23,12 +23,42 @@ The completed project should demonstrate:
 - Model training and evaluation
 - Experiment tracking with MLflow
 - Model and preprocessing artifact persistence
-- FastAPI inference serving
-- Docker-based local runtime
-- CI-ready test and pipeline commands
-- Local observability through logs, reports, and metrics artifacts
+- FastAPI inference serving with health, predict, and metrics endpoints
+- Docker-based local runtime for the inference service
+- docker-compose orchestration of FastAPI, Prometheus, and Grafana
+- GitHub Actions CI running install, tests, and Trivy container security scans
+- Local observability through Prometheus metrics and Grafana dashboards
 - Governance documentation covering versioning, approval, rollback, and
   retention decisions
+- Cloud-portable architecture documentation mapping local components to AWS
+
+## Tooling Decisions
+
+Tools are included only when they solve a real problem at this project's scale.
+
+Docker is included because the inference service needs a portable, reproducible
+runtime boundary. FastAPI alone is not enough — a reviewer must be able to run
+the service without a local Python environment.
+
+GitHub Actions is included because the Makefile already structures the pipeline
+as CI-friendly commands. Automating those commands in a workflow is low cost and
+high signal.
+
+Trivy is included because container security scanning in CI is standard practice
+and adds one workflow step for meaningful security coverage.
+
+Prometheus and Grafana are included because the FastAPI service will expose a
+metrics endpoint, and a local observability stack demonstrates the same pattern
+used in production without requiring cloud infrastructure.
+
+Kubernetes, Helm, Argo CD, Kustomize, Alertmanager, and OpenTelemetry are
+intentionally excluded. They solve orchestration, packaging, and distributed
+tracing problems that do not exist at this scale. Adding them would demonstrate
+tool installation, not engineering judgment.
+
+Terraform is excluded from the codebase because there is no live cloud
+infrastructure to provision. AWS service mappings are documented in
+docs/ARCHITECTURE.md instead.
 
 ## Out Of Scope
 
@@ -40,22 +70,26 @@ The following are intentionally out of scope for the current version:
 - CloudWatch dashboards or alarms
 - Terraform-managed AWS infrastructure
 - Live cloud-hosted inference endpoints
+- Kubernetes and related orchestration tooling (Helm, Argo CD, Kustomize)
+- Distributed tracing (OpenTelemetry)
+- Multi-service alerting (Alertmanager)
 
 ## Cloud-Portable Mapping
 
-The project should still explain how local components would map to cloud
-services in a future implementation.
+The project explains how local components map to cloud services in a future
+implementation. A detailed mapping with reasoning is in docs/ARCHITECTURE.md.
 
 | Local / Portable Component | Future Cloud Equivalent |
 | --- | --- |
-| `data/` and `artifacts/` directories | Object storage such as S3 |
-| Validation reports | Data quality artifacts in object storage |
-| MLflow local tracking | Managed or remote MLflow tracking server |
-| FastAPI local service | Container service, VM, or serverless endpoint |
-| Application logs | Cloud logging service |
-| Metrics artifacts | Monitoring and dashboard service |
-| Makefile / scripts | CI/CD workflow steps |
-| Docker image | Deployable runtime artifact |
+| `data/` and `artifacts/` directories | S3 with versioning and lifecycle policies |
+| Validation reports | S3-backed data quality artifacts |
+| MLflow local tracking | SageMaker Experiments or managed MLflow |
+| FastAPI + Docker | ECS Fargate or SageMaker Endpoint |
+| Docker image | ECR with vulnerability scanning |
+| GitHub Actions CI | GitHub Actions with OIDC to assume an IAM role |
+| Prometheus + Grafana | CloudWatch Metrics and Dashboards |
+| Application logs | CloudWatch Logs |
+| Makefile pipeline commands | Step Functions state machine |
 
 ## Success Criteria
 
