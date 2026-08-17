@@ -8,14 +8,25 @@ TARGET_COLUMN = "is_fraud"
 
 # Columns to drop before feeding the model.
 # These *_was_missing columns are validation-stage audit artifacts (see
-# src/validation/imputation.py) -- current MCAR analysis found none of them
-# fraud-informative (fraud rate was flat or lower in each missing group), so
-# they're dropped by default here rather than fed to the model. Reversible:
-# move any of them into NUMERIC_FEATURES if that evidence changes.
+# src/validation/imputation.py and docs/MISSINGNESS_ANALYSIS.md) -- every
+# one of them tested as MCAR with no significant fraud-rate gap, so none are
+# fed to the model by default. Reversible: move any of them into
+# NUMERIC_FEATURES if future evidence finds one informative. Keep this list
+# in sync with IMPUTATION_SPECS' indicator_column values in imputation.py --
+# not imported directly to avoid a config -> validation dependency.
 COLUMNS_TO_DROP = [
     "velocity_score_was_missing",
     "customer_age_was_missing",
     "distance_from_home_was_missing",
+    "network_quality_was_missing",
+    "transaction_amount_was_missing",
+    "prev_transactions_was_missing",
+    "num_items_was_missing",
+    "hour_of_day_was_missing",
+    "device_type_was_missing",
+    "is_first_transaction_was_missing",
+    "is_weekend_was_missing",
+    "store_type_was_missing",
 ]
 
 NUMERIC_FEATURES = [

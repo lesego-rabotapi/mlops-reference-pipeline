@@ -22,14 +22,9 @@ from pandas.api.types import (
     is_object_dtype,
     is_string_dtype,
 )
-from typing import Tuple
+from typing import Callable, Tuple
 
-from src.validation.imputation import (
-    CUSTOMER_AGE_SPEC,
-    DISTANCE_FROM_HOME_SPEC,
-    VELOCITY_SCORE_SPEC,
-    check_missing_rate_threshold,
-)
+from src.validation.imputation import IMPUTATION_SPECS, ImputationSpec, check_missing_rate_threshold
 
 
 class SchemaRules:
@@ -273,9 +268,8 @@ class DataQualityRules:
         every batch of this dataset by design -- every feature column has
         2%-15% missingness. is_fraud is the only column verified at 0%
         missingness, so it's the one column this stage still hard-requires.
-        Missingness in the other columns is handled per-column (see
-        ImputationGuardRules.velocity_score_missing_rate_within_ceiling for
-        the one column with an approved policy so far).
+        Missingness in every other column is handled per-column via
+        IMPUTATION_GUARD_RULES (see src/validation/imputation.py).
         """
         nulls = df["is_fraud"].isnull().sum()
         if nulls > 0:
@@ -291,41 +285,39 @@ class DataQualityRules:
         return True, ""
 
 
-class ImputationGuardRules:
+def _make_missing_rate_guard(
+    spec: ImputationSpec,
+) -> Callable[[pd.DataFrame], Tuple[bool, str]]:
     """
-    Guards that check an imputation policy's assumptions still hold before
-    the policy is applied. See src/validation/imputation.py for the
-    transformation logic and the evidence behind each policy.
+    Build a rule-registry-shaped guard ((df) -> (bool, str)) for one
+    ImputationSpec. The guard logic itself is identical for every column --
+    only the spec differs, and that spec is the explicit, evidence-backed
+    artifact (see src/validation/imputation.py and
+    docs/MISSINGNESS_ANALYSIS.md). This generates the guards from
+    IMPUTATION_SPECS instead of hand-writing one near-identical static
+    method per column, so rules.py can't silently drift out of sync as new
+    columns get an approved policy.
     """
 
-    @staticmethod
-    def velocity_score_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
-        """
-        velocity_score's MCAR-based median imputation was validated at ~15%
-        missingness. If a new batch drifts well past that, halt instead of
-        imputing on an assumption nobody re-checked.
-        """
-        return check_missing_rate_threshold(df, VELOCITY_SCORE_SPEC)
+    def guard(df: pd.DataFrame) -> Tuple[bool, str]:
+        return check_missing_rate_threshold(df, spec)
 
-    @staticmethod
-    def customer_age_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
-        """
-        customer_age's MCAR-based median imputation was validated at ~12%
-        missingness (see src/validation/imputation.py for the cross-tab
-        evidence). If a new batch drifts well past that, halt instead of
-        imputing on an assumption nobody re-checked.
-        """
-        return check_missing_rate_threshold(df, CUSTOMER_AGE_SPEC)
+    guard.__name__ = f"{spec.column}_missing_rate_within_ceiling"
+    guard.__doc__ = (
+        f"{spec.column}'s MCAR-based {spec.strategy} imputation was "
+        f"validated at ~{spec.validated_missing_rate:.0%} missingness. If a "
+        "new batch drifts well past that, halt instead of imputing on an "
+        "assumption nobody re-checked."
+    )
+    return guard
 
-    @staticmethod
-    def distance_from_home_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
-        """
-        distance_from_home's MCAR-based median imputation was validated at
-        ~10% missingness (see src/validation/imputation.py for the cross-tab
-        evidence). If a new batch drifts well past that, halt instead of
-        imputing on an assumption nobody re-checked.
-        """
-        return check_missing_rate_threshold(df, DISTANCE_FROM_HOME_SPEC)
+
+# One ceiling-guard rule per approved imputation policy, keyed the same way
+# every other rule is: "<column>_missing_rate_within_ceiling".
+IMPUTATION_GUARD_RULES: dict[str, Callable[[pd.DataFrame], Tuple[bool, str]]] = {
+    f"{column}_missing_rate_within_ceiling": _make_missing_rate_guard(spec)
+    for column, spec in IMPUTATION_SPECS.items()
+}
 
 
 # Rules registry: defines all validation rules and their order
@@ -340,16 +332,8 @@ VALIDATION_RULES = {
     "target_not_null": DataQualityRules.target_not_null,
     "minimum_size": DataQualityRules.minimum_dataset_size,
 
-    # Imputation policy guards
-    "velocity_score_missing_rate_within_ceiling": (
-        ImputationGuardRules.velocity_score_missing_rate_within_ceiling
-    ),
-    "customer_age_missing_rate_within_ceiling": (
-        ImputationGuardRules.customer_age_missing_rate_within_ceiling
-    ),
-    "distance_from_home_missing_rate_within_ceiling": (
-        ImputationGuardRules.distance_from_home_missing_rate_within_ceiling
-    ),
+    # Imputation policy guards -- one per column in IMPUTATION_SPECS
+    **IMPUTATION_GUARD_RULES,
 
     # Feature business logic checks
     "transaction_amount_non_negative": FeatureRules.transaction_amount_non_negative,

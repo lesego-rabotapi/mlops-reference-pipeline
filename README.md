@@ -58,7 +58,9 @@ Raw Data
 
 Implemented stages:
 
-- Data validation with reusable rule registry and JSON audit reports
+- Data validation with reusable rule registry and JSON audit reports,
+  including per-column MCAR/MNAR missingness analysis and evidence-backed
+  imputation policies -- see [docs/MISSINGNESS_ANALYSIS.md](docs/MISSINGNESS_ANALYSIS.md)
 - Feature engineering with scikit-learn pipelines and artifact persistence
 - Feature engineering tests including leakage detection
 - Training and evaluation with MLflow tracking, metrics, artifact manifests,

@@ -279,11 +279,12 @@ def run_validation(
 
     Reports are always saved. Validated data is only written when all checks
     pass, which prevents stale or invalid data from becoming trusted input.
-    Every column with an approved imputation policy (velocity_score,
-    customer_age, distance_from_home -- see src/validation/imputation.py for
-    the MCAR evidence behind each) is imputed only after every check --
-    including its own missing-rate ceiling guard -- has passed. Columns
-    without an approved policy yet are saved as-is, nulls intact.
+    Every column with an approved imputation policy (see IMPUTATION_SPECS in
+    src/validation/imputation.py and docs/MISSINGNESS_ANALYSIS.md for the
+    MCAR evidence behind each) is imputed only after every check --
+    including its own missing-rate ceiling guard -- has passed. is_fraud
+    (the target) is never imputed; it's required non-null by the
+    target_not_null rule instead.
     """
     logger.info("=== Data Validation START ===")
     df = load_dataset(input_path)

@@ -3,6 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from src.validation.imputation import IMPUTATION_SPECS
 from src.validation.validate_data import (
     run_core_validation,
     run_validation,
@@ -10,22 +11,19 @@ from src.validation.validate_data import (
 
 
 def make_valid_raw_df(
-    row_count: int = 120,
-    velocity_missing_rate: float = 0.15,
-    customer_age_missing_rate: float = 0.12,
-    distance_from_home_missing_rate: float = 0.10,
+    row_count: int = 120, missing_rate_overrides: dict | None = None
 ) -> pd.DataFrame:
     """
     Create a raw fraud dataset that matches the validation contract.
 
     row_count=120 divides evenly into the small cycles below (2s and 3s) so
-    every column ends up fully populated with in-range values; velocity_score,
-    customer_age, and distance_from_home are seeded with nulls, at
-    caller-controlled rates, since those are the three columns with an
-    approved missing-rate ceiling to test. network_quality is left fully
-    populated -- it has no approved imputation policy, so tests use it to
-    prove out-of-scope columns are left untouched.
+    every column ends up fully populated with in-range values before
+    missingness is seeded. Every column with an approved imputation policy
+    (IMPUTATION_SPECS) gets nulls seeded at its own validated_missing_rate
+    by default -- pass missing_rate_overrides={"column": rate} to push a
+    specific column's rate for ceiling-guard tests.
     """
+    overrides = missing_rate_overrides or {}
     df = pd.DataFrame(
         {
             "transaction_amount": np.linspace(10.0, 200.0, row_count),
@@ -44,14 +42,11 @@ def make_valid_raw_df(
         }
     )
 
-    n_velocity_missing = int(row_count * velocity_missing_rate)
-    df.loc[: n_velocity_missing - 1, "velocity_score"] = np.nan
-
-    n_age_missing = int(row_count * customer_age_missing_rate)
-    df.loc[: n_age_missing - 1, "customer_age"] = np.nan
-
-    n_distance_missing = int(row_count * distance_from_home_missing_rate)
-    df.loc[: n_distance_missing - 1, "distance_from_home"] = np.nan
+    for column, spec in IMPUTATION_SPECS.items():
+        rate = overrides.get(column, spec.validated_missing_rate)
+        n_missing = int(row_count * rate)
+        if n_missing > 0:
+            df.loc[: n_missing - 1, column] = np.nan
 
     return df
 
@@ -86,46 +81,21 @@ def test_core_validation_fails_on_duplicate_rows():
     assert "duplicate row" in duplicate_result.errors[0]
 
 
-def test_core_validation_fails_when_velocity_score_missing_rate_exceeds_ceiling():
-    df = make_valid_raw_df(velocity_missing_rate=0.45)
+def test_core_validation_fails_when_a_column_missing_rate_exceeds_its_ceiling():
+    for column, spec in IMPUTATION_SPECS.items():
+        df = make_valid_raw_df(
+            missing_rate_overrides={column: min(spec.max_missing_rate + 0.20, 0.95)}
+        )
 
-    results = run_core_validation(df)
+        results = run_core_validation(df)
 
-    ceiling_result = next(
-        result
-        for result in results
-        if result.rule_name == "velocity_score_missing_rate_within_ceiling"
-    )
-    assert not ceiling_result.passed
-    assert "exceeds the validated ceiling" in ceiling_result.errors[0]
-
-
-def test_core_validation_fails_when_customer_age_missing_rate_exceeds_ceiling():
-    df = make_valid_raw_df(customer_age_missing_rate=0.40)
-
-    results = run_core_validation(df)
-
-    ceiling_result = next(
-        result
-        for result in results
-        if result.rule_name == "customer_age_missing_rate_within_ceiling"
-    )
-    assert not ceiling_result.passed
-    assert "exceeds the validated ceiling" in ceiling_result.errors[0]
-
-
-def test_core_validation_fails_when_distance_from_home_missing_rate_exceeds_ceiling():
-    df = make_valid_raw_df(distance_from_home_missing_rate=0.35)
-
-    results = run_core_validation(df)
-
-    ceiling_result = next(
-        result
-        for result in results
-        if result.rule_name == "distance_from_home_missing_rate_within_ceiling"
-    )
-    assert not ceiling_result.passed
-    assert "exceeds the validated ceiling" in ceiling_result.errors[0]
+        ceiling_result = next(
+            result
+            for result in results
+            if result.rule_name == f"{column}_missing_rate_within_ceiling"
+        )
+        assert not ceiling_result.passed, f"{column} ceiling guard should have failed"
+        assert "exceeds the validated ceiling" in ceiling_result.errors[0]
 
 
 def test_run_validation_writes_report_and_validated_dataset_on_success(tmp_path):
@@ -153,21 +123,18 @@ def test_run_validation_writes_report_and_validated_dataset_on_success(tmp_path)
     assert report_payload["row_count"] == 120
 
 
-def test_run_validation_imputes_approved_columns_but_leaves_others_null(tmp_path):
+def test_run_validation_imputes_every_approved_column(tmp_path):
     """
-    velocity_score, customer_age, and distance_from_home should each come
-    out fully populated with their indicator columns; a column with no
-    approved imputation policy (network_quality here) should be saved with
-    its nulls intact -- proof nothing beyond the approved scope was silently
-    imputed.
+    Every column in IMPUTATION_SPECS should come out fully populated with
+    its indicator column present -- proof the full missingness-handling
+    scope (all 12 flagged columns) runs end to end through the actual
+    validation pipeline, not just the standalone imputation functions.
     """
     input_path = tmp_path / "raw.csv"
     output_path = tmp_path / "validated" / "validated.csv"
     report_dir = tmp_path / "reports"
 
-    df = make_valid_raw_df()
-    df.loc[0, "network_quality"] = np.nan
-    df.to_csv(input_path, index=False)
+    make_valid_raw_df().to_csv(input_path, index=False)
 
     report = run_validation(
         input_path=input_path,
@@ -179,15 +146,11 @@ def test_run_validation_imputes_approved_columns_but_leaves_others_null(tmp_path
     assert report.passed
     validated_df = pd.read_csv(output_path)
 
-    for column, indicator in [
-        ("velocity_score", "velocity_score_was_missing"),
-        ("customer_age", "customer_age_was_missing"),
-        ("distance_from_home", "distance_from_home_was_missing"),
-    ]:
-        assert indicator in validated_df.columns
-        assert not validated_df[column].isna().any()
+    for column, spec in IMPUTATION_SPECS.items():
+        assert spec.indicator_column in validated_df.columns, column
+        assert not validated_df[column].isna().any(), column
 
-    assert validated_df["network_quality"].isna().sum() == 1
+    assert not validated_df["is_fraud"].isna().any()
 
 
 def test_run_validation_does_not_write_validated_dataset_on_failure(tmp_path):
