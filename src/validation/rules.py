@@ -24,7 +24,12 @@ from pandas.api.types import (
 )
 from typing import Tuple
 
-from src.validation.imputation import VELOCITY_SCORE_SPEC, check_missing_rate_threshold
+from src.validation.imputation import (
+    CUSTOMER_AGE_SPEC,
+    DISTANCE_FROM_HOME_SPEC,
+    VELOCITY_SCORE_SPEC,
+    check_missing_rate_threshold,
+)
 
 
 class SchemaRules:
@@ -302,6 +307,26 @@ class ImputationGuardRules:
         """
         return check_missing_rate_threshold(df, VELOCITY_SCORE_SPEC)
 
+    @staticmethod
+    def customer_age_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        customer_age's MCAR-based median imputation was validated at ~12%
+        missingness (see src/validation/imputation.py for the cross-tab
+        evidence). If a new batch drifts well past that, halt instead of
+        imputing on an assumption nobody re-checked.
+        """
+        return check_missing_rate_threshold(df, CUSTOMER_AGE_SPEC)
+
+    @staticmethod
+    def distance_from_home_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        distance_from_home's MCAR-based median imputation was validated at
+        ~10% missingness (see src/validation/imputation.py for the cross-tab
+        evidence). If a new batch drifts well past that, halt instead of
+        imputing on an assumption nobody re-checked.
+        """
+        return check_missing_rate_threshold(df, DISTANCE_FROM_HOME_SPEC)
+
 
 # Rules registry: defines all validation rules and their order
 # Used by validator to run all checks systematically
@@ -318,6 +343,12 @@ VALIDATION_RULES = {
     # Imputation policy guards
     "velocity_score_missing_rate_within_ceiling": (
         ImputationGuardRules.velocity_score_missing_rate_within_ceiling
+    ),
+    "customer_age_missing_rate_within_ceiling": (
+        ImputationGuardRules.customer_age_missing_rate_within_ceiling
+    ),
+    "distance_from_home_missing_rate_within_ceiling": (
+        ImputationGuardRules.distance_from_home_missing_rate_within_ceiling
     ),
 
     # Feature business logic checks

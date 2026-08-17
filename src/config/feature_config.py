@@ -7,11 +7,16 @@ Changing what gets transformed means changing config, not application logic.
 TARGET_COLUMN = "is_fraud"
 
 # Columns to drop before feeding the model.
-# velocity_score_was_missing is a validation-stage audit artifact (see
-# src/validation/imputation.py) -- current MCAR analysis found it isn't
-# fraud-informative, so it's dropped by default here rather than fed to the
-# model. Reversible: move it into NUMERIC_FEATURES if that evidence changes.
-COLUMNS_TO_DROP = ["velocity_score_was_missing"]
+# These *_was_missing columns are validation-stage audit artifacts (see
+# src/validation/imputation.py) -- current MCAR analysis found none of them
+# fraud-informative (fraud rate was flat or lower in each missing group), so
+# they're dropped by default here rather than fed to the model. Reversible:
+# move any of them into NUMERIC_FEATURES if that evidence changes.
+COLUMNS_TO_DROP = [
+    "velocity_score_was_missing",
+    "customer_age_was_missing",
+    "distance_from_home_was_missing",
+]
 
 NUMERIC_FEATURES = [
     "transaction_amount",

@@ -38,28 +38,30 @@ from src.config.feature_config import (
 def minimal_fraud_df() -> pd.DataFrame:
     """
     Minimal synthetic fraud DataFrame, shaped like the output of the
-    validation stage: the 13 raw fraud columns plus the
-    velocity_score_was_missing indicator added during validation-stage
-    imputation (see src/validation/imputation.py).
+    validation stage: the 13 raw fraud columns plus the three
+    *_was_missing indicators added during validation-stage imputation
+    (see src/validation/imputation.py).
     """
     n = 50
     rng = np.random.default_rng(seed=42)
 
     df = pd.DataFrame({
-        "transaction_amount":         rng.uniform(1, 300, size=n),
-        "hour_of_day":                rng.choice([1.0, 2.0, 3.0], size=n),
-        "is_weekend":                 rng.choice([0.0, 1.0], size=n),
-        "num_items":                  rng.integers(0, 14, size=n).astype(float),
-        "customer_age":               rng.integers(18, 80, size=n).astype(float),
-        "prev_transactions":          rng.integers(0, 40, size=n).astype(float),
-        "distance_from_home":         rng.uniform(0, 225, size=n),
-        "device_type":                rng.choice([0.0, 1.0, 2.0], size=n),
-        "network_quality":            rng.uniform(0, 100, size=n),
-        "is_first_transaction":       rng.choice([0.0, 1.0], size=n),
-        "store_type":                 rng.choice([0.0, 1.0], size=n),
-        "velocity_score":             rng.normal(5, 2, size=n),
-        "velocity_score_was_missing": rng.choice([0, 1], size=n),
-        "is_fraud":                   rng.choice([0, 1], size=n),
+        "transaction_amount":             rng.uniform(1, 300, size=n),
+        "hour_of_day":                    rng.choice([1.0, 2.0, 3.0], size=n),
+        "is_weekend":                     rng.choice([0.0, 1.0], size=n),
+        "num_items":                      rng.integers(0, 14, size=n).astype(float),
+        "customer_age":                   rng.integers(18, 80, size=n).astype(float),
+        "prev_transactions":              rng.integers(0, 40, size=n).astype(float),
+        "distance_from_home":             rng.uniform(0, 225, size=n),
+        "device_type":                    rng.choice([0.0, 1.0, 2.0], size=n),
+        "network_quality":                rng.uniform(0, 100, size=n),
+        "is_first_transaction":           rng.choice([0.0, 1.0], size=n),
+        "store_type":                     rng.choice([0.0, 1.0], size=n),
+        "velocity_score":                 rng.normal(5, 2, size=n),
+        "velocity_score_was_missing":     rng.choice([0, 1], size=n),
+        "customer_age_was_missing":       rng.choice([0, 1], size=n),
+        "distance_from_home_was_missing": rng.choice([0, 1], size=n),
+        "is_fraud":                       rng.choice([0, 1], size=n),
     })
     return df
 
@@ -76,9 +78,11 @@ def preprocessed_df(minimal_fraud_df) -> pd.DataFrame:
 
 class TestPreprocessRawColumns:
 
-    def test_drops_missingness_indicator_column(self, minimal_fraud_df):
+    def test_drops_missingness_indicator_columns(self, minimal_fraud_df):
         result = preprocess_raw_columns(minimal_fraud_df)
         assert "velocity_score_was_missing" not in result.columns
+        assert "customer_age_was_missing" not in result.columns
+        assert "distance_from_home_was_missing" not in result.columns
 
     def test_target_remains_binary(self, minimal_fraud_df):
         result = preprocess_raw_columns(minimal_fraud_df)

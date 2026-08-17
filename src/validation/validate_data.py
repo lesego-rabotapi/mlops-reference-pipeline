@@ -12,7 +12,7 @@ from src.config.paths import (
     VALIDATED_DATASET_PATH,
     VALIDATION_ARTIFACTS_DIR,
 )
-from src.validation.imputation import impute_velocity_score
+from src.validation.imputation import run_imputation
 from src.validation.rules import VALIDATION_RULES
 
 
@@ -279,10 +279,11 @@ def run_validation(
 
     Reports are always saved. Validated data is only written when all checks
     pass, which prevents stale or invalid data from becoming trusted input.
-    velocity_score is imputed (median fill + a velocity_score_was_missing
-    indicator) only after every check -- including its own missing-rate
-    ceiling guard -- has passed. Other missing columns are saved as-is; no
-    MCAR/MNAR analysis has been done for them yet.
+    Every column with an approved imputation policy (velocity_score,
+    customer_age, distance_from_home -- see src/validation/imputation.py for
+    the MCAR evidence behind each) is imputed only after every check --
+    including its own missing-rate ceiling guard -- has passed. Columns
+    without an approved policy yet are saved as-is, nulls intact.
     """
     logger.info("=== Data Validation START ===")
     df = load_dataset(input_path)
@@ -303,7 +304,7 @@ def run_validation(
                 logger.error("%s: %s", result.rule_name, error)
         return report
 
-    df = impute_velocity_score(df)
+    df = run_imputation(df)
     save_validated_dataset(df, validated_output_path)
     logger.info("=== Data Validation COMPLETE ===")
     return report
