@@ -62,14 +62,14 @@ def trained_artifacts(tmp_path, monkeypatch):
             "encoded_feature": [value % 3 for value in range(40)],
         }
     )
-    y_train = pd.DataFrame({"Exited": [0, 1] * 20})
+    y_train = pd.DataFrame({"is_fraud": [0, 1] * 20})
     X_test = pd.DataFrame(
         {
             "numeric_feature": list(range(40, 60)),
             "encoded_feature": [value % 3 for value in range(40, 60)],
         }
     )
-    y_test = pd.DataFrame({"Exited": [0, 1] * 10})
+    y_test = pd.DataFrame({"is_fraud": [0, 1] * 10})
     X_train.to_csv(paths["train_features"], index=False)
     X_test.to_csv(paths["test_features"], index=False)
     y_train.to_csv(paths["train_target"], index=False)

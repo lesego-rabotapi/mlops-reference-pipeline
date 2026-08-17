@@ -144,11 +144,11 @@ Primary code:
 
 Inputs:
 
-- `data/raw/customer_churn_raw.csv`
+- `data/raw/fraud_raw.csv`
 
 Outputs:
 
-- `data/validated/customer_churn_validated.csv`
+- `data/validated/fraud_validated.csv`
 - `artifacts/validation/validation_report_<timestamp>.json`
 
 What this proves:
@@ -185,7 +185,7 @@ Primary code:
 
 Inputs:
 
-- `data/validated/customer_churn_validated.csv`
+- `data/validated/fraud_validated.csv`
 
 Outputs:
 
@@ -301,7 +301,7 @@ The important local artifacts are:
 | Artifact | Owner Stage | Why It Matters |
 | --- | --- | --- |
 | `artifacts/validation/*.json` | Validation | Audit trail for raw data acceptance or rejection |
-| `data/validated/customer_churn_validated.csv` | Validation | Trusted dataset boundary for downstream work |
+| `data/validated/fraud_validated.csv` | Validation | Trusted dataset boundary for downstream work |
 | `artifacts/features/preprocessor.joblib` | Feature engineering | Exact transformation object required by training and serving |
 | `artifacts/features/feature_metadata.json` | Feature engineering | Feature contract evidence for review and inference alignment |
 | `artifacts/training/model.joblib` | Training | Deployable model artifact |

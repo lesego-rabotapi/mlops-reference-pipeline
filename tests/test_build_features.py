@@ -35,37 +35,39 @@ from src.config.feature_config import (
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def minimal_bank_churn_df() -> pd.DataFrame:
+def minimal_fraud_df() -> pd.DataFrame:
     """
-    Minimal synthetic Bank Churn DataFrame.
-    Covers all column types: numeric, categorical, target, identifier.
+    Minimal synthetic fraud DataFrame, shaped like the output of the
+    validation stage: the 13 raw fraud columns plus the
+    velocity_score_was_missing indicator added during validation-stage
+    imputation (see src/validation/imputation.py).
     """
     n = 50
     rng = np.random.default_rng(seed=42)
 
     df = pd.DataFrame({
-        "id":               rng.integers(1000000, 9999999, size=n),
-        "CustomerId":       [f"CUST-{i}" for i in range(n)],
-        "Surname":          rng.choice(["Smith", "Johnson", "Williams", "Brown", "Jones"], size=n),
-        "CreditScore":      rng.integers(300, 850, size=n),
-        "Geography":        rng.choice(["France", "Germany", "Spain"], size=n),
-        "Gender":           rng.choice(["Male", "Female"], size=n),
-        "Age":              rng.integers(18, 80, size=n).astype(float),
-        "Tenure":           rng.integers(0, 10, size=n),
-        "Balance":          rng.uniform(0, 250000, size=n),
-        "NumOfProducts":    rng.integers(1, 4, size=n),
-        "HasCrCard":        rng.choice([0, 1], size=n),
-        "IsActiveMember":   rng.choice([0, 1], size=n),
-        "EstimatedSalary":  rng.uniform(10000, 200000, size=n),
-        "Exited":           rng.choice([0, 1], size=n),
+        "transaction_amount":         rng.uniform(1, 300, size=n),
+        "hour_of_day":                rng.choice([1.0, 2.0, 3.0], size=n),
+        "is_weekend":                 rng.choice([0.0, 1.0], size=n),
+        "num_items":                  rng.integers(0, 14, size=n).astype(float),
+        "customer_age":               rng.integers(18, 80, size=n).astype(float),
+        "prev_transactions":          rng.integers(0, 40, size=n).astype(float),
+        "distance_from_home":         rng.uniform(0, 225, size=n),
+        "device_type":                rng.choice([0.0, 1.0, 2.0], size=n),
+        "network_quality":            rng.uniform(0, 100, size=n),
+        "is_first_transaction":       rng.choice([0.0, 1.0], size=n),
+        "store_type":                 rng.choice([0.0, 1.0], size=n),
+        "velocity_score":             rng.normal(5, 2, size=n),
+        "velocity_score_was_missing": rng.choice([0, 1], size=n),
+        "is_fraud":                   rng.choice([0, 1], size=n),
     })
     return df
 
 
 @pytest.fixture
-def preprocessed_df(minimal_bank_churn_df) -> pd.DataFrame:
+def preprocessed_df(minimal_fraud_df) -> pd.DataFrame:
     """Return the dataset after pre-split processing."""
-    return preprocess_raw_columns(minimal_bank_churn_df)
+    return preprocess_raw_columns(minimal_fraud_df)
 
 
 # ---------------------------------------------------------------------------
@@ -74,20 +76,18 @@ def preprocessed_df(minimal_bank_churn_df) -> pd.DataFrame:
 
 class TestPreprocessRawColumns:
 
-    def test_drops_identifier_columns(self, minimal_bank_churn_df):
-        result = preprocess_raw_columns(minimal_bank_churn_df)
-        assert "id" not in result.columns
-        assert "CustomerId" not in result.columns
-        assert "Surname" not in result.columns
+    def test_drops_missingness_indicator_column(self, minimal_fraud_df):
+        result = preprocess_raw_columns(minimal_fraud_df)
+        assert "velocity_score_was_missing" not in result.columns
 
-    def test_target_remains_binary(self, minimal_bank_churn_df):
-        result = preprocess_raw_columns(minimal_bank_churn_df)
+    def test_target_remains_binary(self, minimal_fraud_df):
+        result = preprocess_raw_columns(minimal_fraud_df)
         assert set(result[TARGET_COLUMN].unique()).issubset({0, 1})
 
-    def test_input_is_not_mutated(self, minimal_bank_churn_df):
-        original_exited = minimal_bank_churn_df[TARGET_COLUMN].copy()
-        preprocess_raw_columns(minimal_bank_churn_df)
-        pd.testing.assert_series_equal(minimal_bank_churn_df[TARGET_COLUMN], original_exited)
+    def test_input_is_not_mutated(self, minimal_fraud_df):
+        original_target = minimal_fraud_df[TARGET_COLUMN].copy()
+        preprocess_raw_columns(minimal_fraud_df)
+        pd.testing.assert_series_equal(minimal_fraud_df[TARGET_COLUMN], original_target)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class TestBuildPreprocessor:
         preprocessor.fit(X)
 
         X_unseen = X.copy()
-        X_unseen["Geography"] = "Italy"
+        X_unseen["device_type"] = 5.0
 
         try:
             preprocessor.transform(X_unseen)
@@ -173,7 +173,7 @@ class TestDataLeakagePrevention:
 
 class TestRunFeaturePipeline:
 
-    def test_pipeline_produces_all_output_files(self, tmp_path, minimal_bank_churn_df, monkeypatch):
+    def test_pipeline_produces_all_output_files(self, tmp_path, minimal_fraud_df, monkeypatch):
         """
         Full pipeline integration test using tmp_path to avoid touching real artifact dirs.
         """
@@ -181,8 +181,8 @@ class TestRunFeaturePipeline:
         import src.features.build_features as bf
 
         # Point all paths to tmp_path
-        validated_csv = tmp_path / "customer_churn_validated.csv"
-        minimal_bank_churn_df.to_csv(validated_csv, index=False)
+        validated_csv = tmp_path / "fraud_validated.csv"
+        minimal_fraud_df.to_csv(validated_csv, index=False)
 
         monkeypatch.setattr(paths, "VALIDATED_DATASET_PATH", validated_csv)
         monkeypatch.setattr(paths, "PROCESSED_DATA_DIR", tmp_path / "processed")

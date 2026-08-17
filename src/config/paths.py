@@ -26,8 +26,8 @@ FEATURES_ARTIFACTS_DIR   = PROJECT_ROOT / "artifacts" / "features"
 TRAINING_ARTIFACTS_DIR   = PROJECT_ROOT / "artifacts" / "training"
 
 # Specific files
-RAW_DATASET_PATH         = RAW_DATA_DIR / "customer_churn_raw.csv"
-VALIDATED_DATASET_PATH   = VALIDATED_DATA_DIR / "customer_churn_validated.csv"
+RAW_DATASET_PATH         = RAW_DATA_DIR / "fraud_raw.csv"
+VALIDATED_DATASET_PATH   = VALIDATED_DATA_DIR / "fraud_validated.csv"
 PREPROCESSOR_PATH        = FEATURES_ARTIFACTS_DIR / "preprocessor.joblib"
 FEATURE_METADATA_PATH    = FEATURES_ARTIFACTS_DIR / "feature_metadata.json"
 

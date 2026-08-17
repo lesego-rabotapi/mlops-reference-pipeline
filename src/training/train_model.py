@@ -1,5 +1,5 @@
 """
-Training and evaluation stage for the churn-prediction pipeline.
+Training and evaluation stage for the fraud-detection pipeline.
 
 Why this file exists: turns the processed-feature contract into a reproducible
 model, evaluation evidence, and serving-compatibility manifest.
@@ -123,7 +123,7 @@ def evaluate_model(
 ) -> dict[str, float]:
     """Compute imbalance-aware evaluation evidence on the held-out test set."""
     if y_test.nunique() < 2:
-        raise ValueError("ROC-AUC requires both churn classes in the test target.")
+        raise ValueError("ROC-AUC requires both fraud classes in the test target.")
 
     predictions = model.predict(X_test)
     probabilities = model.predict_proba(X_test)[:, 1]

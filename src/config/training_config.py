@@ -14,4 +14,4 @@ RANDOM_FOREST_PARAMS = {
     "n_estimators": 100,
     "random_state": RANDOM_SEED,
 }
-MLFLOW_EXPERIMENT_NAME = "churn_training"
+MLFLOW_EXPERIMENT_NAME = "fraud_training"

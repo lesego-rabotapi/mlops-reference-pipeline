@@ -24,64 +24,70 @@ from pandas.api.types import (
 )
 from typing import Tuple
 
+from src.validation.imputation import VELOCITY_SCORE_SPEC, check_missing_rate_threshold
+
 
 class SchemaRules:
     """Schema and datatype validation."""
-    
+
     # Define the expected schema as a class constant
     # This becomes the single source of truth for schema
+    #
+    # All columns except is_fraud are float in the raw CSV: every one of
+    # them has missing values (2%-15%), which forces pandas to upcast even
+    # binary/count columns to float64 on read. is_fraud is the only column
+    # with 0% missingness, so it stays integer.
     REQUIRED_SCHEMA = {
-        "id": "integer",
-        "CustomerId": "integer",
-        "Surname": "string",
-        "CreditScore": "integer",
-        "Geography": "string",
-        "Gender": "string",
-        "Age": "float",
-        "Tenure": "integer",
-        "Balance": "float",
-        "NumOfProducts": "integer",
-        "HasCrCard": "float",
-        "IsActiveMember": "float",
-        "EstimatedSalary": "float",
-        "Exited": "integer",
+        "transaction_amount": "float",
+        "hour_of_day": "float",
+        "is_weekend": "float",
+        "num_items": "float",
+        "customer_age": "float",
+        "prev_transactions": "float",
+        "distance_from_home": "float",
+        "device_type": "float",
+        "network_quality": "float",
+        "is_first_transaction": "float",
+        "store_type": "float",
+        "velocity_score": "float",
+        "is_fraud": "integer",
     }
-    
+
     @staticmethod
     def validate_required_columns(df: pd.DataFrame) -> Tuple[bool, list]:
         """
         Check that all required columns exist.
-        
+
         Returns:
             (passed: bool, errors: list of missing columns)
         """
         missing = set(SchemaRules.REQUIRED_SCHEMA.keys()) - set(df.columns)
-        
+
         if missing:
             return False, [f"Missing required column: {col}" for col in missing]
-        
+
         return True, []
-    
+
     @staticmethod
     def validate_datatypes(df: pd.DataFrame) -> Tuple[bool, list]:
         """
         Check that columns have correct datatypes.
-        
+
         Returns:
             (passed: bool, errors: list of datatype mismatches)
         """
         errors = []
-        
+
         for column, expected_dtype in SchemaRules.REQUIRED_SCHEMA.items():
             if column not in df.columns:
                 continue  # Caught by validate_required_columns
-            
+
             if not SchemaRules._dtype_matches(df[column], expected_dtype):
                 errors.append(
                     f"Invalid dtype for '{column}': "
                     f"expected {expected_dtype}, got {df[column].dtype}"
                 )
-        
+
         return len(errors) == 0, errors
 
     @staticmethod
@@ -103,7 +109,7 @@ class SchemaRules:
             return is_string_dtype(series) or is_object_dtype(series)
 
         raise ValueError(f"Unsupported expected dtype: {expected_dtype}")
-    
+
     @staticmethod
     def validate_no_unexpected_columns(df: pd.DataFrame) -> Tuple[bool, list]:
         """
@@ -111,148 +117,190 @@ class SchemaRules:
         This helps catch data drift or schema creep.
         """
         unexpected = set(df.columns) - set(SchemaRules.REQUIRED_SCHEMA.keys())
-        
+
         if unexpected:
             return False, [f"Unexpected column: {col}" for col in unexpected]
-        
+
         return True, []
 
 
 class FeatureRules:
-    """Business logic and feature validation rules."""
-    
-    @staticmethod
-    def tenure_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Tenure cannot be negative."""
-        if (df["Tenure"] < 0).any():
-            count = (df["Tenure"] < 0).sum()
-            return False, f"Found {count} rows with negative Tenure."
-        return True, ""
-    
-    @staticmethod
-    def age_in_valid_range(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Age must be between 0 and 120 (realistic human age range)."""
-        invalid = (df["Age"] < 0) | (df["Age"] > 120)
-        
-        if invalid.any():
-            count = invalid.sum()
-            return False, f"Found {count} rows with invalid Age values."
-        
-        return True, ""
-    
-    @staticmethod
-    def credit_score_valid(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Credit score must be within standard range (300-850)."""
-        invalid = (df["CreditScore"] < 300) | (df["CreditScore"] > 850)
-        
-        if invalid.any():
-            count = invalid.sum()
-            return False, f"Found {count} rows with invalid CreditScore (not in 300-850)."
-        
-        return True, ""
-    
-    @staticmethod
-    def balance_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Balance cannot be negative."""
-        if (df["Balance"] < 0).any():
-            count = (df["Balance"] < 0).sum()
-            return False, f"Found {count} rows with negative Balance."
-        
-        return True, ""
-    
-    @staticmethod
-    def salary_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Estimated salary cannot be negative."""
-        if (df["EstimatedSalary"] < 0).any():
-            count = (df["EstimatedSalary"] < 0).sum()
-            return False, f"Found {count} rows with negative EstimatedSalary."
-        
-        return True, ""
-    
-    @staticmethod
-    def geography_valid(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Geography must be one of: France, Spain, Germany."""
-        valid_geographies = {"France", "Spain", "Germany"}
-        invalid = set(df["Geography"].unique()) - valid_geographies
-        
-        if invalid:
-            return False, f"Invalid Geography values found: {invalid}"
-        
-        return True, ""
-    
-    @staticmethod
-    def gender_valid(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Gender must be either Male or Female."""
-        valid_genders = {"Male", "Female"}
-        invalid = set(df["Gender"].unique()) - valid_genders
-        
-        if invalid:
-            return False, f"Invalid Gender values found: {invalid}"
-        
-        return True, ""
-    
-    @staticmethod
-    def exited_binary(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Exited (target) must be binary: 0 or 1."""
-        valid_values = {0, 1}
-        invalid = set(df["Exited"].unique()) - valid_values
-        
-        if invalid:
-            return False, f"Invalid Exited values found: {invalid}. Must be 0 or 1."
-        
-        return True, ""
-    
-    @staticmethod
-    def no_duplicate_record_ids(df: pd.DataFrame) -> Tuple[bool, str]:
-        """
-        Raw row identifier must be unique.
+    """
+    Business logic and feature validation rules.
 
-        In this dataset CustomerId is not a reliable primary key because the
-        source contains repeated CustomerId values. The id column is the record
-        identity used to detect duplicate raw rows.
-        """
-        if df["id"].duplicated().any():
-            count = df["id"].duplicated().sum()
-            return False, f"Found {count} duplicate id values."
-        
-        return True, ""
-    
+    Every column here has real missingness (2%-15% in the source dataset), so
+    each check drops nulls before evaluating a range/set -- unlike a
+    zero-null schema, a raw NaN here is expected and is validated separately
+    (see DataQualityRules.target_not_null and the missing-rate ceiling rule).
+    """
+
     @staticmethod
-    def reasonable_num_products(df: pd.DataFrame) -> Tuple[bool, str]:
-        """Number of products should be between 1 and 4 (realistic constraint)."""
-        invalid = (df["NumOfProducts"] < 1) | (df["NumOfProducts"] > 4)
-        
+    def transaction_amount_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
+        """transaction_amount cannot be negative."""
+        values = df["transaction_amount"].dropna()
+        invalid = values < 0
         if invalid.any():
-            count = invalid.sum()
-            return False, f"Found {count} rows with unrealistic NumOfProducts (not 1-4)."
-        
+            return False, f"Found {invalid.sum()} rows with negative transaction_amount."
+        return True, ""
+
+    @staticmethod
+    def num_items_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
+        """num_items cannot be negative."""
+        values = df["num_items"].dropna()
+        invalid = values < 0
+        if invalid.any():
+            return False, f"Found {invalid.sum()} rows with negative num_items."
+        return True, ""
+
+    @staticmethod
+    def prev_transactions_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
+        """prev_transactions cannot be negative."""
+        values = df["prev_transactions"].dropna()
+        invalid = values < 0
+        if invalid.any():
+            return False, f"Found {invalid.sum()} rows with negative prev_transactions."
+        return True, ""
+
+    @staticmethod
+    def distance_from_home_non_negative(df: pd.DataFrame) -> Tuple[bool, str]:
+        """distance_from_home cannot be negative."""
+        values = df["distance_from_home"].dropna()
+        invalid = values < 0
+        if invalid.any():
+            return False, f"Found {invalid.sum()} rows with negative distance_from_home."
+        return True, ""
+
+    @staticmethod
+    def customer_age_in_valid_range(df: pd.DataFrame) -> Tuple[bool, str]:
+        """customer_age must be between 0 and 120 (realistic human age range)."""
+        values = df["customer_age"].dropna()
+        invalid = (values < 0) | (values > 120)
+        if invalid.any():
+            return False, f"Found {invalid.sum()} rows with invalid customer_age values."
+        return True, ""
+
+    @staticmethod
+    def network_quality_in_valid_range(df: pd.DataFrame) -> Tuple[bool, str]:
+        """network_quality is a 0-100 quality score."""
+        values = df["network_quality"].dropna()
+        invalid = (values < 0) | (values > 100)
+        if invalid.any():
+            return False, f"Found {invalid.sum()} rows with invalid network_quality values."
+        return True, ""
+
+    @staticmethod
+    def hour_of_day_valid(df: pd.DataFrame) -> Tuple[bool, str]:
+        """hour_of_day is a 3-level time-of-day bucket: {1, 2, 3}."""
+        valid_values = {1.0, 2.0, 3.0}
+        invalid = set(df["hour_of_day"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid hour_of_day values found: {invalid}"
+        return True, ""
+
+    @staticmethod
+    def device_type_valid(df: pd.DataFrame) -> Tuple[bool, str]:
+        """device_type is a categorical code: {0, 1, 2}."""
+        valid_values = {0.0, 1.0, 2.0}
+        invalid = set(df["device_type"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid device_type values found: {invalid}"
+        return True, ""
+
+    @staticmethod
+    def store_type_valid(df: pd.DataFrame) -> Tuple[bool, str]:
+        """store_type is a categorical code: {0, 1}."""
+        valid_values = {0.0, 1.0}
+        invalid = set(df["store_type"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid store_type values found: {invalid}"
+        return True, ""
+
+    @staticmethod
+    def is_weekend_valid(df: pd.DataFrame) -> Tuple[bool, str]:
+        """is_weekend must be binary: 0 or 1."""
+        valid_values = {0.0, 1.0}
+        invalid = set(df["is_weekend"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid is_weekend values found: {invalid}"
+        return True, ""
+
+    @staticmethod
+    def is_first_transaction_valid(df: pd.DataFrame) -> Tuple[bool, str]:
+        """is_first_transaction must be binary: 0 or 1."""
+        valid_values = {0.0, 1.0}
+        invalid = set(df["is_first_transaction"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid is_first_transaction values found: {invalid}"
+        return True, ""
+
+    @staticmethod
+    def is_fraud_binary(df: pd.DataFrame) -> Tuple[bool, str]:
+        """is_fraud (target) must be binary: 0 or 1."""
+        valid_values = {0, 1}
+        invalid = set(df["is_fraud"].dropna().unique()) - valid_values
+        if invalid:
+            return False, f"Invalid is_fraud values found: {invalid}. Must be 0 or 1."
+        return True, ""
+
+    @staticmethod
+    def no_duplicate_rows(df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        No fully duplicate rows.
+
+        Unlike the churn dataset, this data has no id/customer-id column to
+        key off of, so duplication is checked across the full row instead.
+        """
+        duplicated = df.duplicated()
+        if duplicated.any():
+            return False, f"Found {duplicated.sum()} fully duplicate rows."
         return True, ""
 
 
 class DataQualityRules:
     """Data quality and completeness rules."""
-    
+
     @staticmethod
-    def no_null_values(df: pd.DataFrame) -> Tuple[bool, str]:
-        """No null values allowed in any column."""
-        nulls = df.isnull().sum()
-        
-        if nulls.sum() > 0:
-            null_cols = nulls[nulls > 0]
-            error_msg = ", ".join(
-                [f"{col}({count})" for col, count in null_cols.items()]
-            )
-            return False, f"Found null values in columns: {error_msg}"
-        
+    def target_not_null(df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        is_fraud (the label) must never be null.
+
+        This replaces a blanket "no nulls anywhere" check, which would fail
+        every batch of this dataset by design -- every feature column has
+        2%-15% missingness. is_fraud is the only column verified at 0%
+        missingness, so it's the one column this stage still hard-requires.
+        Missingness in the other columns is handled per-column (see
+        ImputationGuardRules.velocity_score_missing_rate_within_ceiling for
+        the one column with an approved policy so far).
+        """
+        nulls = df["is_fraud"].isnull().sum()
+        if nulls > 0:
+            return False, f"Found {nulls} null values in target column 'is_fraud'."
         return True, ""
-    
+
     @staticmethod
     def minimum_dataset_size(df: pd.DataFrame, min_rows: int = 100) -> Tuple[bool, str]:
         """Dataset must have minimum number of rows."""
         if len(df) < min_rows:
             return False, f"Dataset has {len(df)} rows, but minimum required is {min_rows}."
-        
+
         return True, ""
+
+
+class ImputationGuardRules:
+    """
+    Guards that check an imputation policy's assumptions still hold before
+    the policy is applied. See src/validation/imputation.py for the
+    transformation logic and the evidence behind each policy.
+    """
+
+    @staticmethod
+    def velocity_score_missing_rate_within_ceiling(df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        velocity_score's MCAR-based median imputation was validated at ~15%
+        missingness. If a new batch drifts well past that, halt instead of
+        imputing on an assumption nobody re-checked.
+        """
+        return check_missing_rate_threshold(df, VELOCITY_SCORE_SPEC)
 
 
 # Rules registry: defines all validation rules and their order
@@ -262,20 +310,28 @@ VALIDATION_RULES = {
     "required_columns": SchemaRules.validate_required_columns,
     "datatypes": SchemaRules.validate_datatypes,
     "no_unexpected_columns": SchemaRules.validate_no_unexpected_columns,
-    
+
     # Data quality checks (completeness)
-    "no_nulls": DataQualityRules.no_null_values,
+    "target_not_null": DataQualityRules.target_not_null,
     "minimum_size": DataQualityRules.minimum_dataset_size,
-    
+
+    # Imputation policy guards
+    "velocity_score_missing_rate_within_ceiling": (
+        ImputationGuardRules.velocity_score_missing_rate_within_ceiling
+    ),
+
     # Feature business logic checks
-    "tenure_non_negative": FeatureRules.tenure_non_negative,
-    "age_valid": FeatureRules.age_in_valid_range,
-    "credit_score_valid": FeatureRules.credit_score_valid,
-    "balance_non_negative": FeatureRules.balance_non_negative,
-    "salary_non_negative": FeatureRules.salary_non_negative,
-    "geography_valid": FeatureRules.geography_valid,
-    "gender_valid": FeatureRules.gender_valid,
-    "exited_binary": FeatureRules.exited_binary,
-    "no_duplicate_ids": FeatureRules.no_duplicate_record_ids,
-    "reasonable_products": FeatureRules.reasonable_num_products,
+    "transaction_amount_non_negative": FeatureRules.transaction_amount_non_negative,
+    "num_items_non_negative": FeatureRules.num_items_non_negative,
+    "prev_transactions_non_negative": FeatureRules.prev_transactions_non_negative,
+    "distance_from_home_non_negative": FeatureRules.distance_from_home_non_negative,
+    "customer_age_valid": FeatureRules.customer_age_in_valid_range,
+    "network_quality_valid": FeatureRules.network_quality_in_valid_range,
+    "hour_of_day_valid": FeatureRules.hour_of_day_valid,
+    "device_type_valid": FeatureRules.device_type_valid,
+    "store_type_valid": FeatureRules.store_type_valid,
+    "is_weekend_valid": FeatureRules.is_weekend_valid,
+    "is_first_transaction_valid": FeatureRules.is_first_transaction_valid,
+    "is_fraud_binary": FeatureRules.is_fraud_binary,
+    "no_duplicate_rows": FeatureRules.no_duplicate_rows,
 }

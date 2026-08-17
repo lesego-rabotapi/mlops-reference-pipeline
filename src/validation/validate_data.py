@@ -12,6 +12,7 @@ from src.config.paths import (
     VALIDATED_DATASET_PATH,
     VALIDATION_ARTIFACTS_DIR,
 )
+from src.validation.imputation import impute_velocity_score
 from src.validation.rules import VALIDATION_RULES
 
 
@@ -159,45 +160,48 @@ def run_great_expectations(df: pd.DataFrame) -> ValidationResult:
 
     gx_df = gx.from_pandas(df)
     expectations = [
-        ("id_exists", lambda: gx_df.expect_column_to_exist("id")),
-        ("customer_id_exists", lambda: gx_df.expect_column_to_exist("CustomerId")),
+        ("is_fraud_exists", lambda: gx_df.expect_column_to_exist("is_fraud")),
         (
-            "customer_id_not_null",
-            lambda: gx_df.expect_column_values_to_not_be_null("CustomerId"),
+            "is_fraud_not_null",
+            lambda: gx_df.expect_column_values_to_not_be_null("is_fraud"),
         ),
         (
-            "credit_score_range",
+            "customer_age_range",
             lambda: gx_df.expect_column_values_to_be_between(
-                "CreditScore",
-                min_value=300,
-                max_value=850,
-            ),
-        ),
-        (
-            "age_range",
-            lambda: gx_df.expect_column_values_to_be_between(
-                "Age",
+                "customer_age",
                 min_value=0,
                 max_value=120,
+                mostly=1.0,
             ),
         ),
         (
-            "geography_allowed_values",
+            "network_quality_range",
+            lambda: gx_df.expect_column_values_to_be_between(
+                "network_quality",
+                min_value=0,
+                max_value=100,
+                mostly=1.0,
+            ),
+        ),
+        (
+            "device_type_allowed_values",
             lambda: gx_df.expect_column_values_to_be_in_set(
-                "Geography",
-                ["France", "Spain", "Germany"],
+                "device_type",
+                [0.0, 1.0, 2.0],
+                mostly=1.0,
             ),
         ),
         (
-            "gender_allowed_values",
+            "store_type_allowed_values",
             lambda: gx_df.expect_column_values_to_be_in_set(
-                "Gender",
-                ["Male", "Female"],
+                "store_type",
+                [0.0, 1.0],
+                mostly=1.0,
             ),
         ),
         (
-            "exited_binary",
-            lambda: gx_df.expect_column_values_to_be_in_set("Exited", [0, 1]),
+            "is_fraud_binary",
+            lambda: gx_df.expect_column_values_to_be_in_set("is_fraud", [0, 1]),
         ),
     ]
 
@@ -275,6 +279,10 @@ def run_validation(
 
     Reports are always saved. Validated data is only written when all checks
     pass, which prevents stale or invalid data from becoming trusted input.
+    velocity_score is imputed (median fill + a velocity_score_was_missing
+    indicator) only after every check -- including its own missing-rate
+    ceiling guard -- has passed. Other missing columns are saved as-is; no
+    MCAR/MNAR analysis has been done for them yet.
     """
     logger.info("=== Data Validation START ===")
     df = load_dataset(input_path)
@@ -295,6 +303,7 @@ def run_validation(
                 logger.error("%s: %s", result.rule_name, error)
         return report
 
+    df = impute_velocity_score(df)
     save_validated_dataset(df, validated_output_path)
     logger.info("=== Data Validation COMPLETE ===")
     return report
