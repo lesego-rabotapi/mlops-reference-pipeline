@@ -65,6 +65,16 @@ Implemented stages:
 - Feature engineering tests including leakage detection
 - Training and evaluation with MLflow tracking, imbalance-aware metrics,
   artifact manifests, and training tests
+- Dataset predictive-signal assessment, separate from structural
+  validation -- see [docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)
+
+**Current status:** the raw dataset (`fraud_raw.csv`) passes every
+structural validation check but was assessed and rejected for supervised
+learning -- statistical evidence points to `is_fraud` being generated
+independently of the other features (see
+[docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)). A regenerated
+dataset with a documented, feature-dependent labeling process is pending
+before further training/serving work builds on top of it.
 
 Planned stages: FastAPI serving, Docker, GitHub Actions CI with Trivy, and
 Prometheus/Grafana observability.

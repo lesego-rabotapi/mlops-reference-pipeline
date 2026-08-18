@@ -316,6 +316,88 @@ scope.
 
 ---
 
+## Entry 7: Investigating the signal finding — and treating it as an architecture decision, not an implementation one
+
+**Observation.** Entry 6 found a model with no predictive power, and
+flagged "why" as an open item. Four more targeted checks were run against
+the raw data to distinguish between the possible causes: a preprocessing
+bug, a leakage issue, a model/hyperparameter problem, or a property of the
+dataset itself.
+
+**Analysis.**
+- **Mutual information** (catches nonlinear/non-monotonic relationships
+  Pearson correlation is blind to): essentially zero for every feature
+  (max 0.0053, most exactly 0.0000).
+- **Decile fraud-rate spread per numeric feature**: flat 8-13% across every
+  bin of every column — no feature has a high-risk zone, linear or not.
+- **Pairwise interaction check** (`is_first_transaction` x `device_type`):
+  still flat within the noise band of the smaller cells — rules out "no
+  single feature matters, but a combination does," which a tree ensemble
+  should otherwise be able to exploit if it existed.
+- **Row-order gap analysis** on the label: mean gap between consecutive
+  fraud rows was 9.71, against a theoretical expectation of 9.71 under
+  independent Bernoulli(0.103) sampling — a near-exact match, with no
+  clustering, periodicity, or drift across the file.
+
+Together these rule out a pipeline bug (the raw file was checked directly,
+upstream of any code written for this project) and point to a specific,
+falsifiable hypothesis: `is_fraud` was very likely generated independently
+of the other 12 columns.
+
+**Decision.** This finding was surfaced to the user, who relayed it to
+ChatGPT — the project's designated owner of architecture decisions (see
+`CLAUDE.md`'s multi-agent division of labor). ChatGPT's call: reject
+Dataset v1 for supervised learning rather than either (a) silently training
+against it and reporting misleading numbers, or (b) reverse-engineering the
+labels to make a model "work." The investigation and its evidence are
+preserved, not discarded — a rejected dataset with a documented reason is
+itself evidence of a working data-quality gate.
+
+Two mechanical, non-design pieces followed as implementation:
+- `scripts/assess_dataset_signal.py` — formalized the four ad hoc checks
+  into a runnable, repeatable script (matching the same "documented for
+  repeatability" bar as `scripts/analyze_missingness.py`), writing
+  structured evidence to `artifacts/data_quality/signal_analysis.json`.
+- `docs/DATASET_ASSESSMENT.md` — the narrative verdict and reasoning,
+  including an explicit case for *why this isn't a Great Expectations or
+  core validation rule*: "structurally sound" and "useful for the modeling
+  task" are different claims, and collapsing them into one PASS/FAIL would
+  erase which question actually failed.
+
+What was **not** done: writing a Dataset v2 generator. ChatGPT explicitly
+flagged that as its own architecture decision — which features should
+influence fraud, how strongly, what interactions, what target prevalence,
+how much irreducible noise — and cautioned against jumping straight to
+implementation before that's decided. Per the same division of labor that
+governs this whole project (architecture decisions aren't mine to make
+unilaterally), that boundary was respected rather than worked around.
+
+**Tradeoffs.** Building the generator now would have kept momentum, but at
+the cost of embedding an unreviewed set of modeling assumptions (which
+features matter, how much) directly into what becomes the project's
+canonical dataset — exactly the kind of design decision that's supposed to
+get scrutiny before implementation, not after.
+
+**Lessons learned.**
+- Investigating *why* is itself a skill distinct from noticing *that*
+  something is wrong: each of the four checks here was chosen specifically
+  because it could rule out a different class of explanation (bug vs.
+  leakage vs. hyperparameters vs. genuine absence of signal), not just
+  because more checks are better. A vague "let me look into it" produces
+  a worse answer than a checklist designed around "what would each
+  possible cause look like, and how would I tell them apart?"
+- Not every problem uncovered while implementing is an implementation
+  problem to solve. Recognizing that this specific finding crossed from
+  "bug to fix" into "design decision to make" — and routing it to the
+  role responsible for that decision instead of picking a direction
+  myself — is itself the correct engineering behavior the project's
+  stated division of labor exists to produce.
+- Evidence of a *rejected* option is not waste. The instinct to delete a
+  dead end and move on would have thrown away exactly the artifact that
+  proves the pipeline's data-quality gate works.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **No CI.** The GX bug (Entry 5) is exactly the kind of regression a
@@ -326,6 +408,7 @@ scope.
   the Validation stage guarantees zero nulls reach it. Not wrong, just
   worth a conscious keep-as-defense-in-depth-or-remove decision rather
   than leaving it unexamined.
-- **The near-zero-signal finding from Entry 6.** Needs its own
-  investigation before any stage downstream of Training (serving, in
-  particular) should be treated as building on a working model.
+- **Dataset v2 generation.** Awaiting the architecture decision on the
+  data-generating model (which features influence fraud, interaction
+  structure, target prevalence, noise level) per Entry 7 — implementation
+  starts once that's defined, not before.
