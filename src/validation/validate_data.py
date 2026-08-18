@@ -129,12 +129,55 @@ def run_core_validation(df: pd.DataFrame) -> list[ValidationResult]:
     return results
 
 
+def build_great_expectations_suite(gx):
+    """
+    Build the ExpectationSuite of governance-evidence checks for fraud.csv.
+
+    This mirrors (not replaces) the core rules in src/validation/rules.py --
+    GX exists as a second, industry-standard evidence trail, so the checks
+    are intentionally the same facts checked a different way, not new rules.
+    """
+    suite = gx.ExpectationSuite(name="fraud_validation_suite")
+    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="is_fraud"))
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="is_fraud")
+    )
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="customer_age", min_value=0, max_value=120, mostly=1.0
+        )
+    )
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="network_quality", min_value=0, max_value=100, mostly=1.0
+        )
+    )
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeInSet(
+            column="device_type", value_set=[0.0, 1.0, 2.0], mostly=1.0
+        )
+    )
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeInSet(
+            column="store_type", value_set=[0.0, 1.0], mostly=1.0
+        )
+    )
+    suite.add_expectation(
+        gx.expectations.ExpectColumnValuesToBeInSet(column="is_fraud", value_set=[0, 1])
+    )
+    return suite
+
+
 def run_great_expectations(df: pd.DataFrame) -> ValidationResult:
     """
     Run a compact Great Expectations suite for governance evidence.
 
     Great Expectations is a project standard, so missing or incompatible GX
-    should fail validation instead of being silently skipped.
+    should fail validation instead of being silently skipped. Uses the GX
+    1.x Data Context / ExpectationSuite / Batch API -- the pre-1.0
+    gx.from_pandas() one-liner this stage used to call was removed upstream.
+    A fresh ephemeral context is created per call (no state persisted to
+    disk), matching this stage's stateless, per-run validation model.
     """
     try:
         import great_expectations as gx
@@ -146,74 +189,35 @@ def run_great_expectations(df: pd.DataFrame) -> ValidationResult:
             category="great_expectations",
         )
 
-    if not hasattr(gx, "from_pandas"):
+    try:
+        context = gx.get_context(mode="ephemeral")
+        data_source = context.data_sources.add_pandas("pandas")
+        data_asset = data_source.add_dataframe_asset(name="fraud_dataset")
+        batch_definition = data_asset.add_batch_definition_whole_dataframe(
+            "fraud_batch"
+        )
+        batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
+
+        suite = build_great_expectations_suite(gx)
+        suite_result = batch.validate(suite)
+    except Exception as exc:
         return ValidationResult(
             rule_name="great_expectations_suite",
             passed=False,
-            errors=[
-                "Installed Great Expectations version does not expose "
-                "gx.from_pandas. Migrate this stage to a Data Context, "
-                "Expectation Suite, and Checkpoint before treating GX as passed."
-            ],
+            errors=[f"Great Expectations suite raised {type(exc).__name__}: {exc}"],
             category="great_expectations",
         )
 
-    gx_df = gx.from_pandas(df)
-    expectations = [
-        ("is_fraud_exists", lambda: gx_df.expect_column_to_exist("is_fraud")),
-        (
-            "is_fraud_not_null",
-            lambda: gx_df.expect_column_values_to_not_be_null("is_fraud"),
-        ),
-        (
-            "customer_age_range",
-            lambda: gx_df.expect_column_values_to_be_between(
-                "customer_age",
-                min_value=0,
-                max_value=120,
-                mostly=1.0,
-            ),
-        ),
-        (
-            "network_quality_range",
-            lambda: gx_df.expect_column_values_to_be_between(
-                "network_quality",
-                min_value=0,
-                max_value=100,
-                mostly=1.0,
-            ),
-        ),
-        (
-            "device_type_allowed_values",
-            lambda: gx_df.expect_column_values_to_be_in_set(
-                "device_type",
-                [0.0, 1.0, 2.0],
-                mostly=1.0,
-            ),
-        ),
-        (
-            "store_type_allowed_values",
-            lambda: gx_df.expect_column_values_to_be_in_set(
-                "store_type",
-                [0.0, 1.0],
-                mostly=1.0,
-            ),
-        ),
-        (
-            "is_fraud_binary",
-            lambda: gx_df.expect_column_values_to_be_in_set("is_fraud", [0, 1]),
-        ),
+    errors = [
+        f"Great Expectations check failed: {result.expectation_config.type} "
+        f"on '{result.expectation_config.kwargs.get('column')}'"
+        for result in suite_result.results
+        if not result.success
     ]
-
-    errors = []
-    for expectation_name, expectation in expectations:
-        result = expectation()
-        if not getattr(result, "success", False):
-            errors.append(f"Great Expectations check failed: {expectation_name}")
 
     return ValidationResult(
         rule_name="great_expectations_suite",
-        passed=not errors,
+        passed=suite_result.success,
         errors=errors,
         category="great_expectations",
     )

@@ -6,6 +6,7 @@ import pandas as pd
 from src.validation.imputation import IMPUTATION_SPECS
 from src.validation.validate_data import (
     run_core_validation,
+    run_great_expectations,
     run_validation,
 )
 
@@ -98,6 +99,25 @@ def test_core_validation_fails_when_a_column_missing_rate_exceeds_its_ceiling():
         assert "exceeds the validated ceiling" in ceiling_result.errors[0]
 
 
+def test_great_expectations_passes_for_valid_dataset():
+    df = make_valid_raw_df()
+
+    result = run_great_expectations(df)
+
+    assert result.passed
+    assert result.errors == []
+
+
+def test_great_expectations_fails_for_invalid_dataset():
+    df = make_valid_raw_df()
+    df.loc[0, "customer_age"] = 999.0
+
+    result = run_great_expectations(df)
+
+    assert not result.passed
+    assert any("customer_age" in error for error in result.errors)
+
+
 def test_run_validation_writes_report_and_validated_dataset_on_success(tmp_path):
     input_path = tmp_path / "raw.csv"
     output_path = tmp_path / "validated" / "validated.csv"
@@ -121,6 +141,31 @@ def test_run_validation_writes_report_and_validated_dataset_on_success(tmp_path)
 
     assert report_payload["passed"] is True
     assert report_payload["row_count"] == 120
+
+
+def test_run_validation_passes_with_great_expectations_on_default_path(tmp_path):
+    """
+    Exercises the real default path (include_great_expectations=True, the
+    same default `python -m src.validation.validate_data` -- the Makefile
+    and CI entrypoint -- uses). Every other test in this module passes
+    include_great_expectations=False, which meant the GX integration had no
+    coverage and silently broke until it was run by hand.
+    """
+    input_path = tmp_path / "raw.csv"
+    output_path = tmp_path / "validated" / "validated.csv"
+    report_dir = tmp_path / "reports"
+    make_valid_raw_df().to_csv(input_path, index=False)
+
+    report = run_validation(
+        input_path=input_path,
+        validated_output_path=output_path,
+        report_output_dir=report_dir,
+    )
+
+    assert report.passed
+    assert output_path.exists()
+    gx_result = next(r for r in report.results if r.rule_name == "great_expectations_suite")
+    assert gx_result.passed
 
 
 def test_run_validation_imputes_every_approved_column(tmp_path):
