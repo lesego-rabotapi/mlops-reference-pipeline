@@ -21,6 +21,7 @@ import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     f1_score,
     precision_score,
     recall_score,
@@ -49,7 +50,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-METRIC_NAMES = ("accuracy", "precision", "recall", "f1", "roc_auc")
+METRIC_NAMES = ("accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc")
 
 
 def assert_required_artifacts(paths: tuple[Path, ...]) -> None:
@@ -121,7 +122,22 @@ def evaluate_model(
     X_test: pd.DataFrame,
     y_test: pd.Series,
 ) -> dict[str, float]:
-    """Compute imbalance-aware evaluation evidence on the held-out test set."""
+    """
+    Compute imbalance-aware evaluation evidence on the held-out test set.
+
+    accuracy is reported for reference only, not as the metric anyone should
+    read first: at a low fraud rate, "predict non-fraud for everyone" scores
+    a high accuracy while catching zero fraud. precision/recall/f1 are
+    computed for the fraud class specifically (pos_label=1, average="binary")
+    rather than "weighted" -- a weighted average blends both classes'
+    scores proportional to their support, which lets the large non-fraud
+    class dilute exactly the minority-class signal this evaluation exists
+    to surface. roc_auc is included as a standard reference metric but is
+    known to look optimistic under class imbalance (diluted by the large
+    number of easy true negatives); pr_auc (average precision) is the
+    standard companion for imbalanced problems and should be weighted more
+    heavily when comparing models.
+    """
     if y_test.nunique() < 2:
         raise ValueError("ROC-AUC requires both fraud classes in the test target.")
 
@@ -129,15 +145,25 @@ def evaluate_model(
     probabilities = model.predict_proba(X_test)[:, 1]
     metrics = {
         "accuracy": float(accuracy_score(y_test, predictions)),
-        "precision": float(precision_score(y_test, predictions, zero_division=0)),
-        "recall": float(recall_score(y_test, predictions, zero_division=0)),
-        "f1": float(f1_score(y_test, predictions, average="weighted", zero_division=0)),
+        "precision": float(
+            precision_score(y_test, predictions, pos_label=1, average="binary", zero_division=0)
+        ),
+        "recall": float(
+            recall_score(y_test, predictions, pos_label=1, average="binary", zero_division=0)
+        ),
+        "f1": float(
+            f1_score(y_test, predictions, pos_label=1, average="binary", zero_division=0)
+        ),
         "roc_auc": float(roc_auc_score(y_test, probabilities)),
+        "pr_auc": float(average_precision_score(y_test, probabilities)),
     }
     logger.info(
-        "Evaluation complete: precision=%.4f recall=%.4f roc_auc=%.4f accuracy=%.4f",
+        "Evaluation complete: precision=%.4f recall=%.4f f1=%.4f pr_auc=%.4f "
+        "roc_auc=%.4f accuracy=%.4f",
         metrics["precision"],
         metrics["recall"],
+        metrics["f1"],
+        metrics["pr_auc"],
         metrics["roc_auc"],
         metrics["accuracy"],
     )

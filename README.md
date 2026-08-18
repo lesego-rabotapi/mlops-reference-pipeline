@@ -63,11 +63,15 @@ Implemented stages:
   imputation policies -- see [docs/MISSINGNESS_ANALYSIS.md](docs/MISSINGNESS_ANALYSIS.md)
 - Feature engineering with scikit-learn pipelines and artifact persistence
 - Feature engineering tests including leakage detection
-- Training and evaluation with MLflow tracking, metrics, artifact manifests,
-  and training tests
+- Training and evaluation with MLflow tracking, imbalance-aware metrics,
+  artifact manifests, and training tests
 
 Planned stages: FastAPI serving, Docker, GitHub Actions CI with Trivy, and
 Prometheus/Grafana observability.
+
+See [docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md) for the reasoning
+behind these decisions -- not just what was built, but why, what
+alternatives were rejected, and what went wrong along the way.
 
 ## Mentorship And Engineering Standards
 

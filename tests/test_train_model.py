@@ -13,8 +13,11 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score
 
 import src.training.train_model as training
+from src.config.training_config import RANDOM_FOREST_PARAMS
 
 
 def configure_temporary_paths(tmp_path, monkeypatch) -> dict[str, object]:
@@ -115,6 +118,55 @@ def test_training_writes_manifest_and_binary_integer_predictions(trained_artifac
     predictions = model.predict(X_test)
     assert np.issubdtype(predictions.dtype, np.integer)
     assert set(predictions).issubset({0, 1})
+
+
+def test_build_model_uses_balanced_class_weight():
+    """
+    Regression guard: an unweighted RandomForest silently optimizes as if
+    fraud and non-fraud cost the same to misclassify. class_weight=
+    "balanced" must stay configured -- the wrong default doesn't error,
+    it just quietly trains a worse fraud detector.
+    """
+    model = training.build_model()
+
+    assert model.get_params()["class_weight"] == "balanced"
+
+
+def test_evaluate_model_reports_binary_averaged_metrics_and_pr_auc():
+    """
+    Regression guard: precision/recall/f1 must reflect the fraud class
+    specifically (pos_label=1, average="binary"), not a "weighted" average
+    that lets the large non-fraud class dilute the minority-class score.
+    Also confirms pr_auc is reported -- the standard companion to roc_auc
+    under class imbalance.
+    """
+    # A held-out test set the model wasn't fit on, with a weakly predictive
+    # feature -- a model fit and scored on the same data would memorize it
+    # perfectly (f1=1.0 for every class, hiding the averaging difference
+    # this test exists to catch).
+    rng = np.random.default_rng(0)
+    n_train, n_test = 400, 200
+    X_train = pd.DataFrame({"feature": rng.normal(size=n_train)})
+    y_train = pd.Series((rng.random(n_train) < 0.10).astype(int))
+    X_test = pd.DataFrame({"feature": rng.normal(size=n_test)})
+    y_test = pd.Series((rng.random(n_test) < 0.10).astype(int))
+
+    model = RandomForestClassifier(**RANDOM_FOREST_PARAMS)
+    model.fit(X_train, y_train)
+
+    metrics = training.evaluate_model(model, X_test, y_test)
+
+    predictions = model.predict(X_test)
+    y = y_test
+    expected_binary_f1 = f1_score(y, predictions, pos_label=1, average="binary", zero_division=0)
+    expected_weighted_f1 = f1_score(y, predictions, average="weighted", zero_division=0)
+
+    assert metrics["f1"] == pytest.approx(expected_binary_f1)
+    # Only a meaningful regression guard if the two averaging schemes
+    # actually diverge for this imbalanced sample.
+    assert expected_binary_f1 != pytest.approx(expected_weighted_f1)
+    assert "pr_auc" in metrics
+    assert 0.0 <= metrics["pr_auc"] <= 1.0
 
 
 def test_training_fails_without_processed_inputs(tmp_path, monkeypatch):
