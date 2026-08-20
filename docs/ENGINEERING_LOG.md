@@ -444,12 +444,49 @@ somewhere and needs investigating directly — not a reason to keep the
 
 ---
 
+## Entry 9: Final decision — stay on Dataset v1, reject PaySim as a pivot
+
+**Observation.** ChatGPT proposed PaySim, a well-known public synthetic
+fraud dataset (6.36M rows, 0.13% fraud rate), as a Dataset v2 candidate.
+Direct inspection confirmed it has real signal `fraud_raw.csv` never
+had — fraud occurs only in `TRANSFER`/`CASH_OUT` transactions (0%
+elsewhere), plus a genuine `amount` decile spread.
+
+**Analysis.** PaySim's schema shares no columns with `fraud_raw.csv`,
+has zero missingness (making the twelve MCAR-backed imputation policies
+in `src/validation/imputation.py` inapplicable), and carries far more
+extreme class imbalance (0.13% vs. 10.3%). Adopting it is not a dataset
+swap — it is the same scope of rework Entry 1 did for churn→fraud,
+applied again: `SchemaRules`, `FeatureRules`, `feature_config.py`, and
+training's imbalance handling would all need rebuilding around a
+different problem shape.
+
+**Decision.** Keep Dataset v1. The rewrite PaySim requires is a
+legitimate future project, not a fix for this one — pivoting to it now
+would abandon a finished, working pipeline in favor of restarting a
+structurally different one for the sake of a "real" model result. Full
+comparison, including what each path costs and produces, is in
+`docs/DATASET_ASSESSMENT.md`'s "Decision (resolved)" section.
+
+**Tradeoffs.** This closes off ever training a working fraud classifier
+on this repo's current data — that ceiling was already set by Entry 7's
+signal assessment, and this decision confirms it's being accepted rather
+than worked around. In exchange, the project stays finished and
+demonstrable today instead of becoming a second half-built pipeline.
+
+**Lessons learned.**
+- A dataset with a stronger property (real signal) is not automatically
+  the right move — it can cost more than it's worth if adopting it means
+  rebuilding work that already runs correctly on a different structure.
+- Framing the deliverable honestly (a pipeline that correctly identified
+  its data couldn't support the task, not a working classifier) is what
+  makes staying on the "worse" dataset defensible instead of a compromise
+  being quietly glossed over.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **No CI.** The GX bug (Entry 5) is exactly the kind of regression a
   `pytest`-on-push GitHub Actions workflow would catch automatically.
   Planned per `CLAUDE.md`'s roadmap; not yet built.
-- **Dataset v2 generation.** Awaiting the architecture decision on the
-  data-generating model (which features influence fraud, interaction
-  structure, target prevalence, noise level) per Entry 7 — implementation
-  starts once that's defined, not before.

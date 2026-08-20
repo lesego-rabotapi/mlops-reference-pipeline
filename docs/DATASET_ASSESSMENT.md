@@ -121,3 +121,30 @@ Either way, **this investigation and its artifacts are being kept, not
 deleted** — a rejected dataset with a documented reason is itself
 evidence of a working data-quality gate, which is a legitimate thing to
 be able to show.
+
+## Decision (resolved): stay on Dataset v1
+
+A third option surfaced after this document was written: ChatGPT proposed
+**PaySim** (`PS_20174392719_1491204439457_log.csv`, a well-known public
+synthetic fraud dataset — 6.36M rows, 0.13% fraud rate) as a candidate
+Dataset v2. Inspecting it directly confirmed it has real, learnable
+signal — fraud occurs *only* in `TRANSFER`/`CASH_OUT` transaction types
+(0% in `CASH_IN`/`DEBIT`/`PAYMENT`), plus a genuine `amount` decile
+spread — unlike anything found in `fraud_raw.csv`'s signal assessment
+above.
+
+It was rejected as a same-project pivot, not on data-quality grounds: its
+schema shares no columns with `fraud_raw.csv`, has zero missingness (so
+none of the twelve MCAR-backed imputation policies in
+`src/validation/imputation.py` apply), and carries far more extreme class
+imbalance (0.13% vs. 10.3%). Adopting it would mean redoing the same scope
+of work Entry 1 in `ENGINEERING_LOG.md` did for churn→fraud —
+`SchemaRules`, `FeatureRules`, `feature_config.py`, and the imbalance
+handling in training — not a dataset swap. That's a legitimate future
+project, but an unnecessary pivot away from finishing this one.
+
+**Final decision: keep Dataset v1**, with the deliverable framed
+accordingly — a pipeline whose validation and evaluation stages correctly
+identified that their input data could not support a supervised model,
+end to end, rather than a trained fraud classifier. See
+`ENGINEERING_LOG.md`, Entry 9.
