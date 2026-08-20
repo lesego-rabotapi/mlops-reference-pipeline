@@ -110,6 +110,16 @@ def build_preprocessor() -> ColumnTransformer:
               category values not seen during training. Without this flag, the
               pipeline raises a ValueError and your API returns 500s.
 
+    Both SimpleImputer steps are defense-in-depth, not this pipeline's
+    primary null-handling. The Validation stage (src/validation/imputation.py)
+    already fills every column with an evidence-backed, per-column MCAR
+    policy before this file's input (VALIDATED_DATASET_PATH) is written, so
+    in normal operation these imputers see zero nulls and are no-ops. They
+    stay because this file reads that path directly without re-running
+    Validation's checks, so they are the only guard against a stale file, a
+    hand-edited one, or a future feature column added without a matching
+    ImputationSpec — see docs/ENGINEERING_LOG.md, Entry 8.
+
     remainder="drop" is explicit — unlisted columns are intentionally excluded.
     """
     numeric_pipeline = Pipeline(steps=[

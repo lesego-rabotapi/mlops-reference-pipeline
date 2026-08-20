@@ -398,16 +398,57 @@ get scrutiny before implementation, not after.
 
 ---
 
+## Entry 8: `build_features.py`'s `SimpleImputer` — keep, as defense-in-depth
+
+**Observation.** Entry 7 flagged `build_features.py`'s `SimpleImputer`
+steps (median for numerics, most-frequent for categoricals, inside the
+sklearn `ColumnTransformer`) as provably redundant: the Validation stage
+(`src/validation/imputation.py`) already fills every column with an
+evidence-backed, per-column policy and guarantees zero nulls reach
+`VALIDATED_DATASET_PATH`. On the current pipeline, `SimpleImputer.fit()`
+never sees a null and is a no-op in practice.
+
+**Decision. Keep it.** Two reasons:
+1. **It's a different trust boundary than validation, at negligible cost.**
+   `build_features.py` loads `VALIDATED_DATASET_PATH` directly
+   (`load_validated_data`) and does not re-run `src/validation`'s checks.
+   If that file is ever read from a stale run, edited by hand, produced by
+   a future pipeline path that skips validation, or a new column is added
+   to `NUMERIC_FEATURES`/`CATEGORICAL_FEATURES` without a matching
+   `ImputationSpec`, the feature stage would otherwise call `.fit()` on a
+   column with unexpected nulls and raise deep inside sklearn instead of
+   failing predictably. A no-op imputer costs nothing measurable at this
+   dataset's size; removing it trades a negligible runtime cost for a
+   silent assumption ("upstream always ran and always covers every
+   column") that isn't enforced anywhere in this file.
+2. **It matches the file's own stated design decisions.** The module
+   docstring already lists "median imputation for numerics — robust
+   against outliers in production data" as a deliberate choice, independent
+   of whatever Validation does upstream — `build_features.py` is written to
+   be defensible in isolation, not only correct in combination with
+   Validation's current behavior.
+
+**Documentation added:** `build_preprocessor()`'s docstring in
+`src/features/build_features.py` now states explicitly that the imputers
+are a defense-in-depth guard against an already-validated input, not the
+primary null-handling mechanism (that's Validation's job — see
+`src/validation/imputation.py` and `docs/MISSINGNESS_ANALYSIS.md`), so a
+future reader doesn't mistake it for dead code again without checking this
+entry.
+
+**What would change the answer:** if this imputer step ever fires in
+practice (i.e. logged or observed filling a real null on production data),
+that's a signal the Validation stage's guarantee has been bypassed
+somewhere and needs investigating directly — not a reason to keep the
+`SimpleImputer` doing double duty.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **No CI.** The GX bug (Entry 5) is exactly the kind of regression a
   `pytest`-on-push GitHub Actions workflow would catch automatically.
   Planned per `CLAUDE.md`'s roadmap; not yet built.
-- **Feature engineering's redundant imputer.** `build_features.py`'s
-  `SimpleImputer` inside the sklearn pipeline is now provably redundant —
-  the Validation stage guarantees zero nulls reach it. Not wrong, just
-  worth a conscious keep-as-defense-in-depth-or-remove decision rather
-  than leaving it unexamined.
 - **Dataset v2 generation.** Awaiting the architecture decision on the
   data-generating model (which features influence fraud, interaction
   structure, target prevalence, noise level) per Entry 7 — implementation
