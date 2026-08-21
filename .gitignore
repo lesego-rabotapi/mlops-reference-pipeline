@@ -6,3 +6,5 @@ __pycache__/
 .mlflow/
 artifacts/
 data/
+.pytest_cache/
+*.zip
