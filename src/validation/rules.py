@@ -129,9 +129,10 @@ class FeatureRules:
     Business logic and feature validation rules.
 
     Every column here has real missingness (2%-15% in the source dataset), so
-    each check drops nulls before evaluating a range/set -- unlike a
-    zero-null schema, a raw NaN here is expected and is validated separately
-    (see DataQualityRules.target_not_null and the missing-rate ceiling rule).
+    each check drops nulls before evaluating a range or set. Unlike a
+    zero-null schema, a raw NaN here is expected, and it's validated
+    separately (see DataQualityRules.target_not_null and the missing-rate
+    ceiling rule).
     """
 
     @staticmethod
@@ -290,12 +291,11 @@ def _make_missing_rate_guard(
 ) -> Callable[[pd.DataFrame], Tuple[bool, str]]:
     """
     Build a rule-registry-shaped guard ((df) -> (bool, str)) for one
-    ImputationSpec. The guard logic itself is identical for every column --
-    only the spec differs, and that spec is the explicit, evidence-backed
-    artifact (see src/validation/imputation.py and
-    docs/MISSINGNESS_ANALYSIS.md). This generates the guards from
-    IMPUTATION_SPECS instead of hand-writing one near-identical static
-    method per column, so rules.py can't silently drift out of sync as new
+    ImputationSpec. The guard logic is identical for every column, only
+    the spec differs (see src/validation/imputation.py and
+    docs/MISSINGNESS_ANALYSIS.md for where each one comes from). Generated
+    from IMPUTATION_SPECS instead of hand-writing one near-identical
+    static method per column, so rules.py can't drift out of sync as new
     columns get an approved policy.
     """
 

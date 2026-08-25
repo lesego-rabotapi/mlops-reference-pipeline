@@ -123,20 +123,20 @@ def evaluate_model(
     y_test: pd.Series,
 ) -> dict[str, float]:
     """
-    Compute imbalance-aware evaluation evidence on the held-out test set.
+    Score the model on the held-out test set with imbalance in mind.
 
-    accuracy is reported for reference only, not as the metric anyone should
-    read first: at a low fraud rate, "predict non-fraud for everyone" scores
-    a high accuracy while catching zero fraud. precision/recall/f1 are
-    computed for the fraud class specifically (pos_label=1, average="binary")
-    rather than "weighted" -- a weighted average blends both classes'
-    scores proportional to their support, which lets the large non-fraud
-    class dilute exactly the minority-class signal this evaluation exists
-    to surface. roc_auc is included as a standard reference metric but is
-    known to look optimistic under class imbalance (diluted by the large
-    number of easy true negatives); pr_auc (average precision) is the
-    standard companion for imbalanced problems and should be weighted more
-    heavily when comparing models.
+    accuracy is reported for reference only, not as the number to read
+    first. At a low fraud rate, a model that predicts "not fraud" for
+    every row scores a high accuracy while catching zero actual fraud.
+    precision/recall/f1 are computed for the fraud class specifically
+    (pos_label=1, average="binary") instead of "weighted", since a
+    weighted average blends both classes by their support and lets the
+    much larger non-fraud class dilute exactly the minority-class signal
+    this evaluation exists to catch. roc_auc is included as a standard
+    reference metric, but it's known to look better than it should under
+    class imbalance, propped up by all the easy true negatives. pr_auc
+    (average precision) is the usual companion metric for imbalanced
+    problems and should carry more weight when comparing models.
     """
     if y_test.nunique() < 2:
         raise ValueError("ROC-AUC requires both fraud classes in the test target.")

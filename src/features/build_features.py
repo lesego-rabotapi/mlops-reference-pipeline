@@ -1,19 +1,21 @@
 """
 Feature Engineering Pipeline
 
-Responsibilities:
-- Load validated dataset (immutable pipeline boundary)
-- Enforce the train/test split BEFORE any transformation (prevents data leakage)
-- Build and fit a ColumnTransformer on TRAINING data only
-- Transform both train and test sets using the fitted preprocessor
-- Persist preprocessor artifact for inference reuse
-- Save processed feature matrices and targets
+Loads the validated dataset, splits it into train/test before any fitting
+happens (splitting after would leak test data into the transformation
+statistics), builds and fits a ColumnTransformer on the training data
+only, then transforms both sets with it. Saves the fitted preprocessor
+for reuse at inference time, plus the processed feature matrices and
+targets.
 
-Design decisions:
-- fit() on train only — transformation statistics must not be contaminated by test data
-- handle_unknown="ignore" on OHE — inference WILL encounter unseen categories
-- median imputation for numerics — robust against outliers in production data
-- joblib persistence — sklearn objects serialise cleanly; pickle has version risks
+A few design choices worth knowing: fit() only ever runs on the training
+split, since fitting on the full dataset would leak test data into the
+transformation statistics. OneHotEncoder uses handle_unknown="ignore"
+because inference will see category values training never did, and
+without that flag it just raises. Numeric imputation uses the median
+because it's robust to outliers in production data. Artifacts are saved
+with joblib rather than pickle, since sklearn objects serialize cleanly
+with it and pickle carries more version risk.
 """
 
 import json
@@ -72,11 +74,10 @@ def load_validated_data(path: Path) -> pd.DataFrame:
 
 def preprocess_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply lightweight pre-split fixes that are not transformations:
-    - Drop identifier columns
-    
-    These are deterministic operations with no learned statistics,
-    so they are safe to apply before splitting.
+    Apply lightweight pre-split fixes that aren't really transformations,
+    just dropping identifier columns for now. These are deterministic, with
+    no learned statistics involved, so it's safe to do this before the
+    split.
     """
     df = df.copy()
 
@@ -97,30 +98,31 @@ def split_features_target(
 
 def build_preprocessor() -> ColumnTransformer:
     """
-    Construct the sklearn ColumnTransformer.
+    Build the sklearn ColumnTransformer.
 
-    Numeric pipeline:
-        SimpleImputer(median)  — median is outlier-robust; mean can be skewed by extreme values
-        StandardScaler         — zero mean, unit variance; required by distance-based models
+    Numeric columns get median imputation (robust to outliers, unlike the
+    mean) followed by StandardScaler, since distance-based models need
+    zero-mean, unit-variance input.
 
-    Categorical pipeline:
-        SimpleImputer(most_frequent)     — sensible default for categorical missingness
-        OneHotEncoder(handle_unknown="ignore")
-            ↑ This is not optional. Production inference requests WILL contain
-              category values not seen during training. Without this flag, the
-              pipeline raises a ValueError and your API returns 500s.
+    Categorical columns get most-frequent imputation, then a
+    OneHotEncoder with handle_unknown="ignore". That flag isn't optional:
+    production inference requests will contain category values training
+    never saw, and without it the pipeline just raises a ValueError and
+    your API returns a 500.
 
-    Both SimpleImputer steps are defense-in-depth, not this pipeline's
-    primary null-handling. The Validation stage (src/validation/imputation.py)
-    already fills every column with an evidence-backed, per-column MCAR
-    policy before this file's input (VALIDATED_DATASET_PATH) is written, so
-    in normal operation these imputers see zero nulls and are no-ops. They
-    stay because this file reads that path directly without re-running
-    Validation's checks, so they are the only guard against a stale file, a
-    hand-edited one, or a future feature column added without a matching
-    ImputationSpec — see docs/ENGINEERING_LOG.md, Entry 8.
+    Both SimpleImputer steps are defense-in-depth, not the primary way
+    nulls get handled. Validation (src/validation/imputation.py) already
+    fills every column with an evidence-backed, per-column MCAR policy
+    before this file's input even gets written, so in normal operation
+    these imputers see zero nulls and do nothing. They stay because this
+    file reads that validated file directly without rerunning Validation's
+    checks, and they're the only thing standing between this pipeline and
+    a stale file, a hand-edited one, or a new feature column that shows up
+    without a matching ImputationSpec. See docs/ENGINEERING_LOG.md, Entry
+    8, for the full reasoning.
 
-    remainder="drop" is explicit — unlisted columns are intentionally excluded.
+    remainder="drop" is written out explicitly: columns not listed here
+    are meant to be excluded, not forgotten.
     """
     numeric_pipeline = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="median")),
@@ -145,9 +147,10 @@ def build_preprocessor() -> ColumnTransformer:
 
 def get_feature_names(preprocessor: ColumnTransformer) -> list[str]:
     """
-    Extract feature names post-fit.
-    OHE expands categorical columns — we need the full output name list
-    for DataFrame reconstruction and for the inference layer.
+    Get the feature names after fitting.
+    One-hot encoding expands categorical columns into several, so we need
+    the full output name list to rebuild the DataFrame and for the
+    inference layer to use later.
     """
     return list(preprocessor.get_feature_names_out())
 
@@ -157,11 +160,12 @@ def save_artifacts(
     feature_names: list[str],
 ) -> None:
     """
-    Persist the fitted preprocessor and feature metadata.
+    Save the fitted preprocessor and feature metadata.
 
-    Both artifacts are deployment dependencies — the inference service
-    must load the identical preprocessor that was fitted during training.
-    Version skew here causes silent prediction errors, not crashes.
+    Both are deployment dependencies: the inference service has to load
+    the exact same preprocessor that was fitted during training. Get this
+    out of sync and you don't get a crash, you get silently wrong
+    predictions.
     """
     FEATURES_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 

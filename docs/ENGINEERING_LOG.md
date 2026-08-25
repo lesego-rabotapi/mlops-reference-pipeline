@@ -2,21 +2,21 @@
 
 ## Purpose
 
-This is not a changelog — `git log` already records *what* changed. This
-records **why**: the reasoning trail behind each decision, the alternatives
-that were considered and rejected, and what went wrong along the way. It
-exists so the thinking behind this pipeline can be studied and replicated
-independently, not just the code.
+`git log` already records what changed. This records why: the reasoning
+behind each decision, what alternatives got considered and rejected, and
+what went wrong along the way. The goal is that the thinking behind this
+pipeline can be studied and replicated on its own, not just inferred from
+the code.
 
-Each entry follows the reasoning pattern from
-[MENTORSHIP_OPERATING_PLAN.md](MENTORSHIP_OPERATING_PLAN.md):
-**Observation -> Analysis -> Decision -> Tradeoffs**, plus an explicit
-**Lessons Learned** section — the part most worth re-reading later, because
-it's the part that generalizes beyond this specific repo.
+Each entry follows the pattern from
+[MENTORSHIP_OPERATING_PLAN.md](MENTORSHIP_OPERATING_PLAN.md): Observation,
+Analysis, Decision, Tradeoffs, plus a Lessons Learned section. That last
+part is usually the most worth rereading later, since it's the part that
+generalizes past this specific repo.
 
-Entries are appended as work happens, not rewritten after the fact. If a
-later entry contradicts an earlier one, both stay — that's part of the
-record.
+Entries get appended as work happens, not rewritten afterward. If a later
+entry contradicts an earlier one, both stay. That's part of the record
+too.
 
 ---
 
@@ -24,200 +24,205 @@ record.
 
 **Observation.** The repo's actual design brief (`CLAUDE.md`) described a
 fraud-detection pipeline already validated against `data/fraud.csv`. The
-repo itself was still wired entirely to a customer-churn dataset — schema,
+repo itself was still wired entirely to a customer-churn dataset, schema,
 config, rules, and tests all assumed columns like `CreditScore`,
 `Geography`, `Exited`. `data/fraud.csv` didn't exist in the repo at all.
 
 **Analysis.** Two explanations were possible: either this was the wrong
-repo/branch, or the churn pipeline was leftover scaffolding from an earlier
-phase that the design brief had already moved past. The mismatch was too
-large to guess past — schema, business rules, and every fixture would need
-rewriting either way, and guessing wrong would mean building the wrong
-thing twice.
+repo or branch, or the churn pipeline was leftover scaffolding from an
+earlier phase the design brief had already moved past. The mismatch was
+too large to guess past. Schema, business rules, and every fixture would
+need rewriting either way, and guessing wrong would mean building the
+wrong thing twice.
 
-**Decision.** Asked rather than assumed. The user confirmed: replace churn
-entirely, fraud is the one real dataset. Once that was confirmed, the raw
-CSV was inspected directly (`pandas.read_csv(...).describe()`,
-`.isnull().mean()`) rather than trusting the design brief's numbers
-blindly — they matched (7,000 rows, 10.3% fraud rate, `velocity_score` at
-15% missing), which was itself useful confirmation the brief was current.
+**Decision.** Asked rather than assumed. The user confirmed: replace
+churn entirely, fraud is the one real dataset. Once that was confirmed,
+the raw CSV was inspected directly (`pandas.read_csv(...).describe()`,
+`.isnull().mean()`) rather than trusting the design brief's numbers on
+faith. They matched (7,000 rows, 10.3% fraud rate, `velocity_score` at
+15% missing), which was itself a useful sign the brief was current.
 
 **Tradeoffs.** Rewiring `SchemaRules`, `FeatureRules`, `feature_config.py`,
 and every test fixture in one pass was a bigger change than a single
-column fix, but a half-migrated state (some files fraud-shaped, some still
-churn-shaped) would have been worse — it would silently pass some checks
-against the wrong schema and fail others for confusing reasons.
+column fix, but a half-migrated state (some files fraud-shaped, some
+still churn-shaped) would have been worse. It would silently pass some
+checks against the wrong schema and fail others for confusing reasons.
 
 **Lessons learned.**
-- When a task's premise doesn't match the observable state of the repo,
-  stop and surface the mismatch before writing code against either
-  version. The cost of asking is one message; the cost of building against
-  a guessed-wrong premise is a full rewrite.
-- Verify a design document's factual claims against the actual data before
-  trusting them for downstream decisions — a brief can describe a
-  should-be-true state that isn't the current state.
+- When a task's premise doesn't match what the repo actually looks like,
+  stop and say so before writing code against either version. Asking
+  costs one message; building against a guessed-wrong premise costs a
+  full rewrite.
+- Check a design document's factual claims against the real data before
+  trusting them for downstream decisions. A brief can describe a
+  should-be-true state that isn't the current one.
 
 ---
 
 ## Entry 2: `velocity_score` missingness — MCAR vs. MNAR
 
-**Observation.** `velocity_score` (15% missing, the highest of any column)
-needed an imputation policy. The easy path is `fillna(median)` and move on.
+**Observation.** `velocity_score` (15% missing, the highest of any
+column) needed an imputation policy. The easy path is `fillna(median)`
+and move on.
 
-**Analysis.** Missingness is not automatically safe to fill. If a column is
-missing *because of* something related to the outcome being predicted
-(MNAR — missing not at random), naive imputation doesn't just lose
-information, it actively overwrites a real signal with a plausible-looking
-lie. The only way to know which case this is: test it. Cross-tabulated
-missingness against `is_first_transaction` (would velocity be
-structurally uncomputable for first-time customers with no transaction
-history?) and against `is_fraud` (is missingness itself concentrated in
-fraud cases?).
+**Analysis.** Missingness isn't automatically safe to fill. If a column
+is missing because of something related to the outcome being predicted
+(MNAR, missing not at random), naive imputation doesn't just lose
+information, it actively overwrites a real signal with a
+plausible-looking lie. The only way to know which case this is: test it.
+Cross-tabulated missingness against `is_first_transaction` (would
+velocity be structurally uncomputable for first-time customers with no
+transaction history?) and against `is_fraud` (is missingness itself
+concentrated in fraud cases?).
 
-**Decision.** Missing rate was 14.7% vs. 18.3% across `is_first_transaction`
-— a small gap, not the near-100%-for-one-group split that structural
-uncomputability would produce. Fraud rate was 8.8% (missing) vs. 10.6%
-(present) — missingness isn't concentrated in fraud. Read as MCAR; median
-imputation applied, with a `velocity_score_was_missing` indicator column
-preserved and a missing-rate ceiling (30%, ~2x the validated 15%) guarding
-the assumption against future drift.
+**Decision.** Missing rate was 14.7% vs. 18.3% across
+`is_first_transaction`, a small gap, not the near-100%-for-one-group
+split structural uncomputability would produce. Fraud rate was 8.8%
+(missing) vs. 10.6% (present), so missingness isn't concentrated in
+fraud. Read as MCAR; median imputation applied, with a
+`velocity_score_was_missing` indicator column preserved and a
+missing-rate ceiling (30%, about 2x the validated 15%) guarding the
+assumption against future drift.
 
-**Tradeoffs.** This took real analysis time versus just filling and moving
-on. The alternative — assuming MCAR without checking — would have been
-indistinguishable in the short term and only would have surfaced as a
-problem if the assumption were wrong and nobody caught it.
+**Tradeoffs.** This took real analysis time versus just filling and
+moving on. Assuming MCAR without checking would have looked identical in
+the short term, and only would have surfaced as a problem if the
+assumption were wrong and nobody caught it.
 
 **Lessons learned.**
-- "Missing" is not one category. Test *why* before choosing *how* to
-  handle it — the two questions have different, sometimes contradictory,
+- "Missing" isn't one category. Test why before choosing how to handle
+  it, the two questions can have different, sometimes contradictory
   answers.
-- Preserve the evidence trail of what was imputed (the indicator column)
-  even when current evidence says it's not informative. That conclusion is
-  dataset-specific and time-bound, not a permanent fact.
-- A validated threshold is only valid at the rate it was validated against.
-  Encode that as an explicit ceiling, not an implicit assumption someone
-  has to remember.
+- Keep the evidence trail of what was imputed (the indicator column)
+  even when current evidence says it's not informative. That conclusion
+  is dataset-specific and time-bound, not a permanent fact.
+- A validated threshold is only valid at the rate it was validated
+  against. Write that down as an explicit ceiling instead of leaving it
+  as an assumption someone has to remember.
 
 ---
 
 ## Entry 3: Extending the same analysis to `customer_age` and `distance_from_home`
 
-**Observation.** These two columns (12% and 10% missing) were explicitly
-flagged by the design brief as *not yet analyzed* — a caution against
-pattern-matching "also has moderate missingness" onto the same MCAR
-treatment used for `velocity_score`.
+**Observation.** These two columns (12% and 10% missing) were flagged by
+the design brief as not yet analyzed, a caution against pattern-matching
+"also has moderate missingness" onto the same MCAR treatment used for
+`velocity_score`.
 
-**Analysis.** Ran the identical methodology: fraud-rate split, categorical
+**Analysis.** Ran the same methodology: fraud-rate split, categorical
 driver crosstabs, continuous-driver quartile splits, cross-column
 missingness correlation. Both came back flat across every driver tested,
-fraud rate flat-to-lower in the missing group for both, near-zero
+fraud rate flat to lower in the missing group for both, and near-zero
 missingness correlation with any other column.
 
-**Decision.** Same MCAR conclusion, same treatment (median + indicator +
-ceiling) — but arrived at through the same evidence-gathering process, not
-by assuming the earlier verdict transferred.
+**Decision.** Same MCAR conclusion, same treatment (median, indicator,
+ceiling), but reached through the same evidence-gathering process, not
+by assuming the earlier verdict carried over.
 
-**Tradeoffs.** None beyond the time cost of running the analysis twice more
-instead of once.
+**Tradeoffs.** None beyond the time cost of running the analysis twice
+more instead of once.
 
 **Lessons learned.**
-- A caution like "don't assume, verify" only has value if it's actually
-  followed the second and third time, not just the first. The temptation
-  to skip the re-check grows precisely when the pattern looks the most
-  familiar.
+- A caution like "don't assume, verify" only means something if it's
+  actually followed the second and third time, not just the first. The
+  temptation to skip the recheck grows exactly when the pattern looks
+  most familiar.
 
 ---
 
 ## Entry 4: The remaining 9 columns, and formalizing the ceiling rule
 
-**Observation.** 9 more columns had real missingness (2%-9%) and no policy
-yet. Two of them (`hour_of_day`, `device_type`, plus `is_first_transaction`,
-`is_weekend`, `store_type`) are categorical/binary, not continuous — median
-doesn't apply to them.
+**Observation.** 9 more columns had real missingness (2%-9%) and no
+policy yet. Some of them (`hour_of_day`, `device_type`,
+`is_first_transaction`, `is_weekend`, `store_type`) are
+categorical/binary, not continuous, so median doesn't apply.
 
 **Analysis.** Same four checks, but formalized into a runnable script
-(`scripts/analyze_missingness.py`) instead of one-off interactive queries,
-plus a proper two-proportion z-test for the fraud-rate split instead of
-eyeballing a percentage gap. All 9 came back MCAR (max p-value 0.079 on
-`num_items`, still above the 0.05 threshold; max cross-column missingness
-correlation 0.037 across all 12 analyzed columns).
+(`scripts/analyze_missingness.py`) instead of one-off interactive
+queries, plus an actual two-proportion z-test for the fraud-rate split
+instead of eyeballing a percentage gap. All 9 came back MCAR (highest
+p-value 0.079 on `num_items`, still above the 0.05 threshold; highest
+cross-column missingness correlation 0.037 across all 12 analyzed
+columns).
 
-**Decision.** Continuous columns got median imputation, matching the first
-three. Categorical/binary columns got mode imputation instead — the same
-default `SimpleImputer(strategy="most_frequent")` already used downstream
-in `build_features.py`'s categorical pipeline, made explicit and
-rate-guarded at the validation stage instead of happening silently later.
-Also formalized the missing-rate ceiling as an explicit rule instead of an
-ad hoc judgment call each time: *the smallest multiple of 5 that is >= 2x
-the validated missing rate.*
+**Decision.** Continuous columns got median imputation, matching the
+first three. Categorical/binary columns got mode imputation instead, the
+same default `SimpleImputer(strategy="most_frequent")` already used
+downstream in `build_features.py`'s categorical pipeline, just made
+explicit and rate-guarded at the validation stage instead of happening
+quietly later. Also wrote the missing-rate ceiling down as an explicit
+rule instead of an ad hoc judgment call each time: the smallest multiple
+of 5 that's at least 2x the validated missing rate.
 
-**Tradeoffs.** `ImputationGuardRules`' per-column static methods (three
-hand-written, identical except for which spec they called) were replaced
-with rules generated from the `IMPUTATION_SPECS` registry — less code, but
-one more level of indirection (`_make_missing_rate_guard` builds a closure)
-that a reader has to understand before the individual rule names make
-sense. Chosen because the alternative — nine more hand-written,
-copy-pasted static methods — was a bigger cost: `rules.py` could silently
-drift out of sync with `imputation.py`'s registry as it grew.
+**Tradeoffs.** The three hand-written `ImputationGuardRules` static
+methods (identical except for which spec they called) got replaced with
+rules generated from the `IMPUTATION_SPECS` registry. That's less code,
+but it adds a level of indirection (`_make_missing_rate_guard` builds a
+closure) a reader has to understand before the individual rule names
+make sense. Chose it anyway, because the alternative (nine more
+hand-written, copy-pasted static methods) was the bigger cost: `rules.py`
+could silently drift out of sync with `imputation.py`'s registry as it
+grew.
 
 **Lessons learned.**
 - Once a pattern repeats a third time with zero variation in the logic
-  (only in the data it closes over), that's the signal to generalize it —
+  (only in the data it closes over), that's the signal to generalize it,
   not before, when you don't yet know if the repetition is real or
-  coincidental. Generalizing after two real cases (`velocity_score`,
-  `customer_age`+`distance_from_home` together) rather than trying to
-  predict the abstraction upfront to `avoid duplication before it existed`
-  kept the earlier entries honest about what evidence actually justified.
-- A convention followed inconsistently (ceilings that were "roughly double,
-  eyeballed" for the first three columns) becomes technical debt the
-  moment a fourth column needs one. Write the rule down as a formula once
-  it needs to apply more than twice.
-- "Documented for repeatability" means a runnable script, not just prose.
-  Prose describing a methodology rots — a script either still runs or
-  visibly breaks.
+  coincidental. Generalizing after two real cases (`velocity_score`, then
+  `customer_age` and `distance_from_home` together), rather than trying
+  to predict the abstraction upfront, kept the earlier entries honest
+  about what evidence actually justified.
+- A convention followed inconsistently (ceilings that were "roughly
+  double, eyeballed" for the first three columns) turns into technical
+  debt the moment a fourth column needs one. Write the rule down as a
+  formula once it needs to apply more than twice.
+- "Documented for repeatability" means a runnable script, not just
+  prose. Prose describing a methodology goes stale silently; a script
+  either still runs or visibly breaks.
 
 ---
 
 ## Entry 5: The Great Expectations bug — a test suite that proved nothing about the path that mattered
 
-**Observation.** While confirming the Validation stage was genuinely done,
-`python -m src.validation.validate_data` — the actual command the Makefile
-and any future CI would run — was run by hand. It failed. Every test in
-the suite was green.
+**Observation.** While confirming the Validation stage was genuinely
+done, `python -m src.validation.validate_data`, the actual command the
+Makefile and any future CI would run, was run by hand. It failed. Every
+test in the suite was green.
 
 **Analysis.** `run_great_expectations()` called `gx.from_pandas(df)`, a
 pre-1.0 Great Expectations API. The installed version was 1.17.1, which
 doesn't expose it. This had presumably been broken since the GX
 integration was first written against a different installed version. It
-was invisible because *every single test* that called `run_validation()`
-passed `include_great_expectations=False` — the one code path that
-mattered most for "does this actually work in production" had zero test
-coverage, while everything else was thoroughly tested.
+stayed invisible because every single test that called
+`run_validation()` passed `include_great_expectations=False`, so the one
+code path that mattered most for "does this actually work in
+production" had zero test coverage while everything else was thoroughly
+tested.
 
 **Decision.** Migrated to the GX 1.x Data Context / ExpectationSuite /
-Batch API. Then — more importantly — added a test that calls
-`run_validation()` on its true default (`include_great_expectations=True`,
-no override), plus direct pass/fail tests for `run_great_expectations()`
-itself.
+Batch API. Then, more importantly, added a test that calls
+`run_validation()` on its true default
+(`include_great_expectations=True`, no override), plus direct pass/fail
+tests for `run_great_expectations()` itself.
 
-**Tradeoffs.** None really — this was a pure bug fix. The only cost was the
-time between when it broke and when it was noticed, which was entirely a
-function of the coverage gap.
+**Tradeoffs.** None really, this was a pure bug fix. The only real cost
+was the time between when it broke and when it got noticed, which came
+down entirely to the coverage gap.
 
 **Lessons learned.**
-- **A green test suite only proves what it exercises.** If every test
-  disables the one thing you're worried about, you have zero signal on it,
-  regardless of how many other tests pass. This is the single most
-  important lesson in this log so far.
-- The way to find this class of bug is to run the real command, not just
-  the tests — CI would have caught this too (once it exists; see Entry 6's
-  open item), but manual verification against the actual entrypoint is
-  what caught it here, and should be habitual before calling any stage
-  "done."
-- When a test suite passes a flag to disable a subsystem in every single
-  call site, ask why that subsystem doesn't get exercised elsewhere. If
-  the answer is "convenience" rather than "this really can't be tested,"
-  that's a coverage gap wearing a disguise.
+- A green test suite only proves what it actually exercises. If every
+  test disables the one thing you're worried about, you have zero signal
+  on it, no matter how many other tests pass. This is probably the
+  single most important lesson in this log so far.
+- The way to catch this class of bug is to run the real command, not
+  just the tests. CI would have caught it too, once it exists (see the
+  open items below), but manual verification against the actual
+  entrypoint is what caught it here, and it's worth making a habit
+  before calling any stage "done."
+- When a test suite passes a flag to disable a subsystem at every call
+  site, ask why that subsystem doesn't get exercised anywhere else. If
+  the honest answer is "convenience" rather than "this genuinely can't
+  be tested," that's a coverage gap wearing a disguise.
 
 ---
 
@@ -225,176 +230,176 @@ function of the coverage gap.
 
 **Observation.** The project's stated purpose (`CLAUDE.md`) is to
 demonstrate handling of rare-event classification, which forces real
-choices around evaluation metrics that a balanced-class toy problem never
-would. The training stage as it stood computed `accuracy` first,
-`f1_score(..., average="weighted")`, and no PR-AUC — none of which are
-appropriate defaults for an imbalanced problem, and the model had no
+choices around evaluation metrics that a balanced-class toy problem
+never would. The training stage as it stood computed `accuracy` first,
+`f1_score(..., average="weighted")`, and no PR-AUC, none of which are
+good defaults for an imbalanced problem, and the model had no
 `class_weight` set.
 
-**Analysis.**
-- **`class_weight` unset** means `RandomForestClassifier` optimizes as if
-  false negatives and false positives on the tiny fraud class cost the
-  same as on the large non-fraud class. This doesn't error — it just
-  quietly trains a worse fraud detector while looking completely normal.
-- **`average="weighted"` on F1** blends both classes' F1 scores
-  proportional to their support. On a binary problem where one class is
-  ~90% of the data, that means the number reported is dominated by how
-  well the model does on the class nobody cares about, diluting exactly
-  the signal the metric exists to surface.
-- **ROC-AUC alone** is known to look optimistic under class imbalance — a
-  huge population of easy true negatives makes the curve look better than
-  the model's real usefulness. PR-AUC (average precision) is the standard
-  companion metric that doesn't have this blind spot, and CLAUDE.md names
-  it explicitly.
+**Analysis.** With `class_weight` unset, `RandomForestClassifier`
+optimizes as if false negatives and false positives on the tiny fraud
+class cost the same as on the large non-fraud class. That doesn't error,
+it just quietly trains a worse fraud detector while looking completely
+normal. `average="weighted"` on F1 blends both classes' F1 scores
+proportional to their support, so on a binary problem where one class is
+about 90% of the data, the number reported ends up dominated by how well
+the model does on the class nobody actually cares about, which dilutes
+exactly the signal the metric exists to surface. And ROC-AUC alone is
+known to look optimistic under class imbalance: a huge population of
+easy true negatives makes the curve look better than the model's real
+usefulness. PR-AUC (average precision) is the standard companion metric
+that doesn't have this blind spot, and CLAUDE.md names it explicitly.
 
 **Decision.** Set `class_weight="balanced"` (reweighted once on the full
-training set — the standard first choice; `"balanced_subsample"` is the
+training set, the standard first choice; `"balanced_subsample"` is the
 per-bootstrap-tree variant, unnecessary complexity at this scale of
-imbalance and this deliberate to state explicitly rather than leave as a
-silent default). Switched precision/recall/F1 to `pos_label=1,
-average="binary"` — the fraud class specifically. Added `pr_auc`
+imbalance, worth stating explicitly rather than leaving it as a silent
+default). Switched precision/recall/F1 to `pos_label=1,
+average="binary"`, the fraud class specifically. Added `pr_auc`
 (`average_precision_score`) to the metric set. Added regression tests for
-both: one confirming `class_weight` is actually configured, one confirming
-`f1` differs from what a `"weighted"` average would have produced (proving
-the fix actually changes behavior, not just that it doesn't crash).
+both changes: one confirming `class_weight` is actually configured, one
+confirming `f1` differs from what a `"weighted"` average would have
+produced, proving the fix actually changes behavior and doesn't just
+avoid crashing.
 
-**What this revealed — the actually important part.** Running the hardened
-metrics against the real trained model on real data:
+**What this revealed.** Running the hardened metrics against the real
+trained model on real data:
 
 ```
 precision=0.0000 recall=0.0000 f1=0.0000 pr_auc=0.1114 roc_auc=0.5083 accuracy=0.8971
 ```
 
-The model predicts zero fraud cases, ever, at the default threshold. Every
-predicted probability across the entire 1,400-row test set topped out at
-0.39 — never crossing 0.5. ROC-AUC of 0.508 is indistinguishable from a
-coin flip. Feature importances are nearly uniform across every column
-(0.07-0.15 for numerics, ~0.01 each for one-hot categoricals) — the model
-found no feature more useful than any other, which is what "no real
-signal" looks like in a trained model. Checked independently against the
-raw data: every numeric feature's correlation with `is_fraud` is below
-0.05 in magnitude. **This is a property of the dataset, not a bug in
-today's change** — `class_weight="balanced"` is confirmed active on the
-saved model; the classifier genuinely has nothing learnable to weight.
+The model predicts zero fraud cases, ever, at the default threshold.
+Every predicted probability across the entire 1,400-row test set topped
+out at 0.39, never crossing 0.5. A ROC-AUC of 0.508 is indistinguishable
+from a coin flip. Feature importances are nearly uniform across every
+column (0.07-0.15 for numerics, about 0.01 each for one-hot
+categoricals), meaning the model found no feature more useful than any
+other, which is what "no real signal" looks like in a trained model.
+Checked independently against the raw data: every numeric feature's
+correlation with `is_fraud` is below 0.05 in magnitude. This is a
+property of the dataset, not a bug in this change,
+`class_weight="balanced"` is confirmed active on the saved model; the
+classifier genuinely has nothing learnable to weight.
 
 The old metric set (`accuracy=0.897`, which reads as "89.7% correct,"
 alongside a `weighted` F1 that would have scored suspiciously close to
-that same number) would have **hidden this completely**. A model that
+that same number) would have hidden this completely. A model that
 predicts "not fraud" for every single row scores 89.7% accuracy on a
-dataset that's 10.3% fraud, and a weighted F1 mostly reflects performance
-on the 89.7% majority class it's also getting right by doing nothing. This
-is close to the textbook example of why accuracy is the wrong headline
-metric for this class of problem — and it took hardening the metrics to
-actually see it, rather than just say it.
+dataset that's 10.3% fraud, and a weighted F1 mostly just reflects
+performance on the 89.7% majority class it's also getting right by doing
+nothing. It's close to the textbook example of why accuracy is the wrong
+headline metric for this kind of problem, and it took hardening the
+metrics to actually see it, rather than just say it.
 
 **Tradeoffs.** None on the implementation side. But this finding changes
 what "harden Training" can mean: fixing the evaluation lens doesn't fix
 what it's now correctly showing. `class_weight="balanced"` alone wasn't
-enough to produce a usable model on this feature set — that's a modeling /
-feature-signal problem, not a metrics problem, and it's outside today's
-scope.
+enough to produce a usable model on this feature set. That's a modeling
+or feature-signal problem, not a metrics problem, and it's outside this
+entry's scope.
 
 **Lessons learned.**
 - The whole point of choosing the right metric is that it might tell you
   something you don't want to hear. If hardening a metric never changes
   the story, it probably wasn't doing anything.
-- Accuracy on an imbalanced problem isn't just "less informative" than
-  precision/recall — it can be actively misleading in the specific
-  direction of hiding a non-functional model, because "predict the
+- Accuracy on an imbalanced problem isn't just less informative than
+  precision and recall, it can actively mislead in the specific
+  direction of hiding a non-functional model, since "predict the
   majority class always" is a free, high-accuracy strategy that requires
   learning nothing.
-- A model that trains without error and produces a plausible-shaped output
-  (probabilities between 0 and 1, predictions in {0,1}) has not been
+- A model that trains without error and produces plausible-shaped output
+  (probabilities between 0 and 1, predictions in {0,1}) hasn't been
   shown to work. "Ran successfully" and "learned something real" are
-  different claims, and only evaluation — the right evaluation — can tell
-  them apart.
-- This is not yet a blocker resolved — it's a blocker *found*. The next
-  honest step is investigating why (weak features as engineered, a
-  fundamentally hard synthetic label, a model class mismatch, or something
-  else) before treating any "next stage" as safe to build on top of this
-  model's output.
+  different claims, and only the right evaluation can tell them apart.
+- This isn't a blocker resolved, it's a blocker found. The honest next
+  step is investigating why (weak features as engineered, a
+  fundamentally hard synthetic label, a model class mismatch, or
+  something else) before treating any later stage as safe to build on
+  top of this model's output.
 
 ---
 
 ## Entry 7: Investigating the signal finding — and treating it as an architecture decision, not an implementation one
 
-**Observation.** Entry 6 found a model with no predictive power, and
-flagged "why" as an open item. Four more targeted checks were run against
-the raw data to distinguish between the possible causes: a preprocessing
-bug, a leakage issue, a model/hyperparameter problem, or a property of the
-dataset itself.
+**Observation.** Entry 6 found a model with no predictive power and
+flagged "why" as an open item. Four more targeted checks were run
+against the raw data to distinguish between the possible causes: a
+preprocessing bug, a leakage issue, a model or hyperparameter problem, or
+a property of the dataset itself.
 
 **Analysis.**
-- **Mutual information** (catches nonlinear/non-monotonic relationships
+- Mutual information (catches nonlinear or non-monotonic relationships
   Pearson correlation is blind to): essentially zero for every feature
   (max 0.0053, most exactly 0.0000).
-- **Decile fraud-rate spread per numeric feature**: flat 8-13% across every
-  bin of every column — no feature has a high-risk zone, linear or not.
-- **Pairwise interaction check** (`is_first_transaction` x `device_type`):
-  still flat within the noise band of the smaller cells — rules out "no
+- Decile fraud-rate spread per numeric feature: flat 8-13% across every
+  bin of every column, no feature has a high-risk zone, linear or not.
+- Pairwise interaction check (`is_first_transaction` x `device_type`):
+  still flat within the noise band of the smaller cells, ruling out "no
   single feature matters, but a combination does," which a tree ensemble
   should otherwise be able to exploit if it existed.
-- **Row-order gap analysis** on the label: mean gap between consecutive
+- Row-order gap analysis on the label: mean gap between consecutive
   fraud rows was 9.71, against a theoretical expectation of 9.71 under
-  independent Bernoulli(0.103) sampling — a near-exact match, with no
+  independent Bernoulli(0.103) sampling, a near-exact match, with no
   clustering, periodicity, or drift across the file.
 
-Together these rule out a pipeline bug (the raw file was checked directly,
-upstream of any code written for this project) and point to a specific,
-falsifiable hypothesis: `is_fraud` was very likely generated independently
-of the other 12 columns.
+Together these rule out a pipeline bug (the raw file was checked
+directly, upstream of any code written for this project) and point to a
+specific, falsifiable hypothesis: `is_fraud` was very likely generated
+independently of the other 12 columns.
 
 **Decision.** This finding was surfaced to the user, who relayed it to
-ChatGPT — the project's designated owner of architecture decisions (see
+ChatGPT, the project's designated owner of architecture decisions (see
 `CLAUDE.md`'s multi-agent division of labor). ChatGPT's call: reject
-Dataset v1 for supervised learning rather than either (a) silently training
-against it and reporting misleading numbers, or (b) reverse-engineering the
-labels to make a model "work." The investigation and its evidence are
-preserved, not discarded — a rejected dataset with a documented reason is
+Dataset v1 for supervised learning rather than either silently training
+against it and reporting misleading numbers, or reverse-engineering the
+labels to make a model "work." The investigation and its evidence got
+kept, not discarded, a rejected dataset with a documented reason is
 itself evidence of a working data-quality gate.
 
-Two mechanical, non-design pieces followed as implementation:
-- `scripts/assess_dataset_signal.py` — formalized the four ad hoc checks
+Two mechanical pieces followed from there:
+- `scripts/assess_dataset_signal.py` formalizes the four ad hoc checks
   into a runnable, repeatable script (matching the same "documented for
   repeatability" bar as `scripts/analyze_missingness.py`), writing
   structured evidence to `artifacts/data_quality/signal_analysis.json`.
-- `docs/DATASET_ASSESSMENT.md` — the narrative verdict and reasoning,
-  including an explicit case for *why this isn't a Great Expectations or
-  core validation rule*: "structurally sound" and "useful for the modeling
-  task" are different claims, and collapsing them into one PASS/FAIL would
-  erase which question actually failed.
+- `docs/DATASET_ASSESSMENT.md` has the narrative verdict and reasoning,
+  including why this isn't a Great Expectations or core validation rule:
+  "structurally sound" and "useful for the modeling task" are different
+  claims, and collapsing them into one PASS/FAIL would erase which
+  question actually failed.
 
-What was **not** done: writing a Dataset v2 generator. ChatGPT explicitly
-flagged that as its own architecture decision — which features should
-influence fraud, how strongly, what interactions, what target prevalence,
-how much irreducible noise — and cautioned against jumping straight to
-implementation before that's decided. Per the same division of labor that
-governs this whole project (architecture decisions aren't mine to make
-unilaterally), that boundary was respected rather than worked around.
+What didn't happen: writing a Dataset v2 generator. ChatGPT explicitly
+flagged that as its own architecture decision, which features should
+influence fraud, how strongly, what interactions, what target
+prevalence, how much irreducible noise, and cautioned against jumping
+straight to implementation before that's decided. Per the same division
+of labor that governs this whole project, architecture decisions aren't
+mine to make unilaterally, so that boundary got respected rather than
+worked around.
 
-**Tradeoffs.** Building the generator now would have kept momentum, but at
-the cost of embedding an unreviewed set of modeling assumptions (which
-features matter, how much) directly into what becomes the project's
-canonical dataset — exactly the kind of design decision that's supposed to
-get scrutiny before implementation, not after.
+**Tradeoffs.** Building the generator now would have kept momentum, but
+at the cost of embedding an unreviewed set of modeling assumptions
+(which features matter, how much) directly into what becomes the
+project's canonical dataset, exactly the kind of design decision that's
+supposed to get scrutiny before implementation, not after.
 
 **Lessons learned.**
-- Investigating *why* is itself a skill distinct from noticing *that*
-  something is wrong: each of the four checks here was chosen specifically
-  because it could rule out a different class of explanation (bug vs.
-  leakage vs. hyperparameters vs. genuine absence of signal), not just
-  because more checks are better. A vague "let me look into it" produces
-  a worse answer than a checklist designed around "what would each
-  possible cause look like, and how would I tell them apart?"
+- Investigating why is its own skill, separate from noticing that
+  something is wrong. Each of the four checks here got picked because it
+  could rule out a different class of explanation (bug vs. leakage vs.
+  hyperparameters vs. genuine absence of signal), not just because more
+  checks are better. A vague "let me look into it" produces a worse
+  answer than a checklist built around "what would each possible cause
+  look like, and how would I tell them apart?"
 - Not every problem uncovered while implementing is an implementation
   problem to solve. Recognizing that this specific finding crossed from
-  "bug to fix" into "design decision to make" — and routing it to the
+  "bug to fix" into "design decision to make," and routing it to the
   role responsible for that decision instead of picking a direction
-  myself — is itself the correct engineering behavior the project's
-  stated division of labor exists to produce.
-- Evidence of a *rejected* option is not waste. The instinct to delete a
-  dead end and move on would have thrown away exactly the artifact that
-  proves the pipeline's data-quality gate works.
+  unilaterally, is itself the correct engineering behavior the project's
+  division of labor is supposed to produce.
+- Evidence of a rejected option isn't waste. Deleting a dead end and
+  moving on would have thrown away exactly the artifact that proves the
+  pipeline's data-quality gate works.
 
 ---
 
@@ -409,37 +414,37 @@ evidence-backed, per-column policy and guarantees zero nulls reach
 never sees a null and is a no-op in practice.
 
 **Decision. Keep it.** Two reasons:
-1. **It's a different trust boundary than validation, at negligible cost.**
+1. It's a different trust boundary than validation, at negligible cost.
    `build_features.py` loads `VALIDATED_DATASET_PATH` directly
-   (`load_validated_data`) and does not re-run `src/validation`'s checks.
-   If that file is ever read from a stale run, edited by hand, produced by
-   a future pipeline path that skips validation, or a new column is added
-   to `NUMERIC_FEATURES`/`CATEGORICAL_FEATURES` without a matching
+   (`load_validated_data`) and doesn't re-run `src/validation`'s checks.
+   If that file is ever read from a stale run, edited by hand, produced
+   by a future pipeline path that skips validation, or a new column gets
+   added to `NUMERIC_FEATURES`/`CATEGORICAL_FEATURES` without a matching
    `ImputationSpec`, the feature stage would otherwise call `.fit()` on a
    column with unexpected nulls and raise deep inside sklearn instead of
    failing predictably. A no-op imputer costs nothing measurable at this
    dataset's size; removing it trades a negligible runtime cost for a
    silent assumption ("upstream always ran and always covers every
    column") that isn't enforced anywhere in this file.
-2. **It matches the file's own stated design decisions.** The module
-   docstring already lists "median imputation for numerics — robust
-   against outliers in production data" as a deliberate choice, independent
-   of whatever Validation does upstream — `build_features.py` is written to
-   be defensible in isolation, not only correct in combination with
+2. It matches the file's own stated design decisions. The module
+   docstring already lists median imputation for numerics, robust
+   against outliers in production data, as a deliberate choice
+   independent of whatever Validation does upstream. `build_features.py`
+   is written to hold up on its own, not only when combined with
    Validation's current behavior.
 
-**Documentation added:** `build_preprocessor()`'s docstring in
+**Documentation added.** `build_preprocessor()`'s docstring in
 `src/features/build_features.py` now states explicitly that the imputers
 are a defense-in-depth guard against an already-validated input, not the
-primary null-handling mechanism (that's Validation's job — see
+primary null-handling mechanism (that's Validation's job, see
 `src/validation/imputation.py` and `docs/MISSINGNESS_ANALYSIS.md`), so a
-future reader doesn't mistake it for dead code again without checking this
-entry.
+future reader doesn't mistake it for dead code again without checking
+this entry.
 
-**What would change the answer:** if this imputer step ever fires in
-practice (i.e. logged or observed filling a real null on production data),
+**What would change the answer.** If this imputer step ever fires in
+practice (logged or observed filling a real null on production data),
 that's a signal the Validation stage's guarantee has been bypassed
-somewhere and needs investigating directly — not a reason to keep the
+somewhere and needs investigating directly, not a reason to keep the
 `SimpleImputer` doing double duty.
 
 ---
@@ -449,39 +454,39 @@ somewhere and needs investigating directly — not a reason to keep the
 **Observation.** ChatGPT proposed PaySim, a well-known public synthetic
 fraud dataset (6.36M rows, 0.13% fraud rate), as a Dataset v2 candidate.
 Direct inspection confirmed it has real signal `fraud_raw.csv` never
-had — fraud occurs only in `TRANSFER`/`CASH_OUT` transactions (0%
+had: fraud occurs only in `TRANSFER`/`CASH_OUT` transactions (0%
 elsewhere), plus a genuine `amount` decile spread.
 
 **Analysis.** PaySim's schema shares no columns with `fraud_raw.csv`,
-has zero missingness (making the twelve MCAR-backed imputation policies
-in `src/validation/imputation.py` inapplicable), and carries far more
-extreme class imbalance (0.13% vs. 10.3%). Adopting it is not a dataset
-swap — it is the same scope of rework Entry 1 did for churn→fraud,
-applied again: `SchemaRules`, `FeatureRules`, `feature_config.py`, and
-training's imbalance handling would all need rebuilding around a
+has zero missingness (which makes the twelve MCAR-backed imputation
+policies in `src/validation/imputation.py` inapplicable), and carries far
+more extreme class imbalance (0.13% vs. 10.3%). Adopting it isn't a
+dataset swap, it's the same scope of rework Entry 1 did for churn to
+fraud, applied again: `SchemaRules`, `FeatureRules`, `feature_config.py`,
+and training's imbalance handling would all need rebuilding around a
 different problem shape.
 
 **Decision.** Keep Dataset v1. The rewrite PaySim requires is a
-legitimate future project, not a fix for this one — pivoting to it now
-would abandon a finished, working pipeline in favor of restarting a
+legitimate future project, not a fix for this one. Pivoting to it now
+would mean abandoning a finished, working pipeline to restart a
 structurally different one for the sake of a "real" model result. Full
 comparison, including what each path costs and produces, is in
 `docs/DATASET_ASSESSMENT.md`'s "Decision (resolved)" section.
 
 **Tradeoffs.** This closes off ever training a working fraud classifier
-on this repo's current data — that ceiling was already set by Entry 7's
-signal assessment, and this decision confirms it's being accepted rather
-than worked around. In exchange, the project stays finished and
-demonstrable today instead of becoming a second half-built pipeline.
+on this repo's current data, that ceiling was already set by Entry 7's
+signal assessment, and this decision just confirms it's being accepted
+rather than worked around. In exchange, the project stays finished and
+demonstrable today instead of turning into a second half-built pipeline.
 
 **Lessons learned.**
-- A dataset with a stronger property (real signal) is not automatically
-  the right move — it can cost more than it's worth if adopting it means
+- A dataset with a stronger property (real signal) isn't automatically
+  the right move. It can cost more than it's worth if adopting it means
   rebuilding work that already runs correctly on a different structure.
 - Framing the deliverable honestly (a pipeline that correctly identified
   its data couldn't support the task, not a working classifier) is what
-  makes staying on the "worse" dataset defensible instead of a compromise
-  being quietly glossed over.
+  makes staying on the "worse" dataset defensible instead of a
+  compromise quietly glossed over.
 
 ---
 

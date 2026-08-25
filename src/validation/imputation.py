@@ -1,24 +1,24 @@
 """
 Missing-value imputation policies for the fraud dataset.
 
-Imputation is chosen per column from evidence about *why* the value is
-missing, not applied as a blanket default across every column with nulls.
-Each policy below documents the missingness analysis that justified it, so
-the choice stays auditable instead of being an unexplained fillna().
+Each column's imputation strategy comes from a real missingness analysis,
+not a blanket fillna() applied everywhere nulls show up. The comment above
+each spec below explains why that column's missingness was judged safe to
+fill, and with what.
 
-Full methodology and results for every column analyzed so far live in
-docs/MISSINGNESS_ANALYSIS.md. The same checks are re-runnable via
-scripts/analyze_missingness.py <column> for a new column or a new batch.
+Full methodology and results live in docs/MISSINGNESS_ANALYSIS.md.
+scripts/analyze_missingness.py <column> reruns the same checks for a new
+column or a new batch.
 
-Key principle:
-- Every imputed column keeps a companion indicator column, so the fact that
-  a value was imputed is never silently lost.
-- Every policy carries a missing-rate ceiling: max_missing_rate is the
-  smallest multiple of 5 that is >= 2x validated_missing_rate. It is not a
-  tuned hyperparameter -- it is a drift ceiling on the dataset the
-  MCAR/MNAR analysis was actually run against. A new batch that blows past
-  it should stop the pipeline rather than keep imputing on an assumption
-  nobody re-checked.
+Two things worth knowing about every spec here: every imputed column gets
+a companion indicator column, so you can always tell later which rows
+were actually filled in versus real values. And every policy carries a
+missing-rate ceiling (max_missing_rate is the smallest multiple of 5
+that's at least 2x the validated missing rate) -- that's not a tuned
+hyperparameter, it's a drift check. The MCAR/MNAR analysis only holds at
+the rate it was run against, so a batch that blows past this ceiling
+should stop the pipeline instead of imputing on an assumption nobody
+rechecked.
 """
 
 import logging
@@ -280,13 +280,13 @@ STORE_TYPE_SPEC = ImputationSpec(
 
 def _impute(df: pd.DataFrame, spec: ImputationSpec) -> pd.DataFrame:
     """
-    Fill spec.column's nulls per its strategy, preserving an indicator column.
+    Fill spec.column's nulls according to its strategy, keeping the indicator column.
 
-    "median" is used for continuous columns (outlier-robust). "mode" is used
-    for categorical/binary columns, where a median is meaningless -- it's
-    the same MCAR-driven default SimpleImputer(strategy="most_frequent")
-    applies downstream in build_features.py's categorical pipeline, made
-    explicit and auditable here instead of silently happening later.
+    "median" is for continuous columns (robust to outliers). "mode" is for
+    categorical/binary columns, where a median wouldn't mean anything. It's
+    the same default SimpleImputer(strategy="most_frequent") uses downstream
+    in build_features.py's categorical pipeline, just made explicit and
+    visible here instead of happening quietly later.
     """
     result = df.copy()
     result[spec.indicator_column] = result[spec.column].isna().astype(int)
@@ -376,12 +376,12 @@ def check_missing_rate_threshold(
     df: pd.DataFrame, spec: ImputationSpec
 ) -> tuple[bool, str]:
     """
-    Guard the MCAR assumption behind an imputation policy before imputing.
+    Check the MCAR assumption still holds before imputing.
 
-    If a new batch's missing rate has drifted well past what the MCAR
-    analysis was validated against, the strategy should not be trusted
-    blindly. Surface it so a human re-checks the analysis instead of
-    silently imputing an ever-larger share of the column.
+    If a new batch's missing rate has drifted well past what the analysis
+    was validated against, don't trust the strategy blindly. Raise instead,
+    so a human rechecks the analysis rather than the pipeline quietly
+    imputing an ever-larger share of the column.
     """
     if spec.column not in df.columns:
         return False, f"Column '{spec.column}' not found for missingness check."

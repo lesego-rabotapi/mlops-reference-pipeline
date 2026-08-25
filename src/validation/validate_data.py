@@ -56,8 +56,9 @@ def load_dataset(path: Path) -> pd.DataFrame:
     """
     Load the raw dataset into a DataFrame.
 
-    The validation stage is the first trusted boundary. If the raw input is
-    missing, fail before downstream stages can accidentally use stale outputs.
+    Validation is the first trust boundary in the pipeline. If the raw
+    input is missing, fail here rather than let a downstream stage
+    accidentally run against stale output.
     """
     if not path.exists():
         raise FileNotFoundError(f"Raw dataset not found at {path}")
@@ -84,11 +85,11 @@ def run_rule(
     df: pd.DataFrame,
 ) -> ValidationResult:
     """
-    Execute one validation rule and capture failures as reportable evidence.
+    Run one validation rule and turn any failure into reportable evidence.
 
-    Validation should not crash without a report when a rule encounters an
-    unexpected shape. A crash is converted into a failed rule result so the
-    operator can see what happened.
+    A rule crashing on unexpected input shouldn't take down the whole run
+    with no report. Convert the crash into a failed result instead, so
+    whoever's looking at the report can see what happened.
     """
     try:
         passed, errors = rule(df)
@@ -107,11 +108,11 @@ def run_rule(
 
 def run_core_validation(df: pd.DataFrame) -> list[ValidationResult]:
     """
-    Run reusable validation rules from the shared registry.
+    Run the validation rules from the shared registry.
 
-    Schema rules run first because all later checks assume the expected columns
-    and logical dtypes exist. If schema fails, stop there to avoid noisy or
-    misleading downstream rule failures.
+    Schema rules run first, since every later check assumes the expected
+    columns and dtypes exist. If schema fails, stop there -- otherwise you
+    get a wall of downstream failures that are really just one root cause.
     """
     results: list[ValidationResult] = []
 
@@ -131,11 +132,12 @@ def run_core_validation(df: pd.DataFrame) -> list[ValidationResult]:
 
 def build_great_expectations_suite(gx):
     """
-    Build the ExpectationSuite of governance-evidence checks for fraud.csv.
+    Build the ExpectationSuite of governance checks for fraud.csv.
 
-    This mirrors (not replaces) the core rules in src/validation/rules.py --
-    GX exists as a second, industry-standard evidence trail, so the checks
-    are intentionally the same facts checked a different way, not new rules.
+    This mirrors the core rules in src/validation/rules.py, it doesn't
+    replace them. GX is a second, industry-standard evidence trail, so
+    these checks are deliberately the same facts verified a different way,
+    not new rules.
     """
     suite = gx.ExpectationSuite(name="fraud_validation_suite")
     suite.add_expectation(gx.expectations.ExpectColumnToExist(column="is_fraud"))
@@ -172,12 +174,12 @@ def run_great_expectations(df: pd.DataFrame) -> ValidationResult:
     """
     Run a compact Great Expectations suite for governance evidence.
 
-    Great Expectations is a project standard, so missing or incompatible GX
-    should fail validation instead of being silently skipped. Uses the GX
-    1.x Data Context / ExpectationSuite / Batch API -- the pre-1.0
-    gx.from_pandas() one-liner this stage used to call was removed upstream.
-    A fresh ephemeral context is created per call (no state persisted to
-    disk), matching this stage's stateless, per-run validation model.
+    Great Expectations is a project standard, so a missing or incompatible
+    GX install should fail validation, not get silently skipped. Uses the
+    GX 1.x Data Context / ExpectationSuite / Batch API, since the pre-1.0
+    gx.from_pandas() one-liner this used to call got removed upstream. A
+    fresh ephemeral context is created per call (nothing persisted to
+    disk), matching how this whole stage runs: stateless, per call.
     """
     try:
         import great_expectations as gx
@@ -279,16 +281,16 @@ def run_validation(
     include_great_expectations: bool = True,
 ) -> ValidationReport:
     """
-    Execute the full validation stage.
+    Run the full validation stage.
 
-    Reports are always saved. Validated data is only written when all checks
-    pass, which prevents stale or invalid data from becoming trusted input.
-    Every column with an approved imputation policy (see IMPUTATION_SPECS in
-    src/validation/imputation.py and docs/MISSINGNESS_ANALYSIS.md for the
-    MCAR evidence behind each) is imputed only after every check --
-    including its own missing-rate ceiling guard -- has passed. is_fraud
-    (the target) is never imputed; it's required non-null by the
-    target_not_null rule instead.
+    Reports are always saved. The validated dataset only gets written once
+    every check passes, which keeps stale or invalid data from becoming
+    trusted input. Every column with an approved imputation policy (see
+    IMPUTATION_SPECS in src/validation/imputation.py, and
+    docs/MISSINGNESS_ANALYSIS.md for the MCAR evidence behind each one)
+    only gets imputed after every check has passed, including its own
+    missing-rate ceiling guard. is_fraud, the target, is never imputed --
+    it's required non-null through the target_not_null rule instead.
     """
     logger.info("=== Data Validation START ===")
     df = load_dataset(input_path)
