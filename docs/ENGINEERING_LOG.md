@@ -560,11 +560,89 @@ manually verified in the previous session before any of this started.
 
 ---
 
+## Entry 11: Adding Trivy to CI — a real CRITICAL finding, and a real breaking change from fixing it
+
+**Observation.** `.github/workflows/ci.yml` ran install and tests but had
+no container security scan, despite `docs/PROJECT_SCOPE.md` naming Trivy
+explicitly as part of this project's CI. Added a build-then-scan step and
+ran it locally first against the real `fraud-api:local` image before
+trusting it in CI.
+
+**Analysis.** The scan wasn't theoretical -- it found 46 real HIGH/CRITICAL
+vulnerabilities with available fixes, split across OS packages (3, from
+the `python:3.12-slim` base image) and Python dependencies (43, from
+`requirements.txt`). One was worth acting on immediately:
+`mlflow==3.12.0` carries CVE-2026-64849, a CRITICAL unauthenticated SSRF
+in webhook delivery (`_validate_webhook_url` bypassed via an unvalidated
+path), fixed in `3.15.0`. `docker build` succeeding had told us nothing
+about this -- the image ran, the tests passed, and none of that surfaced
+a known, published, actively-exploitable vulnerability sitting in a
+pinned dependency.
+
+**Decision.** Scoped the CI gate to `severity: HIGH,CRITICAL` with
+`exit-code: 1` and `ignore-unfixed: true`. Scanning every severity sounds
+more thorough but produces a list long enough that a team learns to
+ignore the check entirely; gating only on the two severities worth
+actually stopping a deploy over keeps the check meaningful.
+`ignore-unfixed` skips vulnerabilities with no available patch, since
+failing a build over something nobody can act on today just trains
+people to bypass the gate rather than fix anything.
+
+Then upgraded `mlflow`/`mlflow-skinny`/`mlflow-tracing` from `3.12.0` to
+`3.15.2` (latest, past the `3.15.0` fix line) to close the CRITICAL
+finding. This broke `configure_mlflow()` immediately: `mlflow>=3.15`
+hard-refuses the filesystem tracking backend
+(`MLflowException: The filesystem tracking backend ... is in maintenance
+mode`) that every training run and test in this project depends on --
+the exact deprecation warning every test run had already been printing
+(`FutureWarning: The filesystem tracking backend ... is deprecated as of
+February 2026`) had hardened into a real error. Fixed by setting
+`MLFLOW_ALLOW_FILE_STORE=true` in `configure_mlflow()` rather than adding
+a SQLite tracking backend: this project is deliberately local-first with
+no infra beyond what solves a real problem
+(`docs/PROJECT_SCOPE.md`), and the filesystem backend still works fine at
+this project's scale -- opting into the documented escape hatch keeps
+that positioning intact instead of quietly growing a new dependency to
+route around a warning.
+
+**Tradeoffs.** Upgrading a pinned dependency to fix one CVE risks pulling
+in unrelated breaking changes, which is exactly what happened here, just
+not in the vulnerable code path itself. Verified the fix didn't silently
+change anything else: 80/80 tests pass, and a real end-to-end training
+run produces the identical, previously-documented metrics
+(`roc_auc=0.5083`, same deterministic model) -- the upgrade only changed
+what CVE-2026-64849 and the tracking-backend deprecation do, nothing
+about the model or pipeline's actual behavior.
+
+**Lessons learned.**
+- A CI check that never fires against real content isn't verified, it's
+  assumed. Running Trivy locally against the actual built image, not
+  just wiring the YAML and trusting it, is what turned "this should
+  catch vulnerabilities" into "this caught 46 real ones, one of them
+  worth fixing today."
+- Fixing a security finding by bumping a version is not automatically
+  safe just because the CVE itself is unrelated to your code path. Treat
+  a dependency upgrade for a CVE fix with the same verification bar as
+  any other change: run the real tests, run the real pipeline, and
+  compare output to what was true before.
+- A scanner surfacing more than you can act on right now (46 findings,
+  one CRITICAL) is normal, not a sign to fix everything at once. Fixing
+  the one with real severity and an available patch, and leaving the
+  rest as a known, visible backlog rather than either ignoring the scan
+  or trying to zero it out in one pass, is the sustainable version of
+  this practice.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
-- **CI's Trivy step.** `.github/workflows/ci.yml` runs install and tests
-  but has no container security scan yet -- now that `Dockerfile` exists,
-  this is unblocked.
+- **42 remaining HIGH-severity findings from the Trivy scan** (`mistune`,
+  `pillow`, `pyasn1`, `sqlparse`, `starlette`, and 3 OS-level packages in
+  `python:3.12-slim`) are not yet upgraded -- only the CRITICAL
+  `mlflow` finding was addressed in Entry 11. CI's Trivy step will fail
+  on these until they're triaged; re-run
+  `docker run --rm aquasec/trivy:latest image --severity HIGH,CRITICAL
+  --ignore-unfixed fraud-api:local` to see the current list.
 - **`docs/GOVERNANCE.md` and `docs/MONITORING.md`.** Per
   `LOCAL_COMPLETION_GUIDE.md`'s Governance and Operations phase, neither
   exists yet. `MONITORING.md` in particular can now describe real,

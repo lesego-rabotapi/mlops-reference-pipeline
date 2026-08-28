@@ -11,6 +11,7 @@ Must not: validate raw data, perform feature engineering, or serve predictions.
 import hashlib
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -200,7 +201,19 @@ def save_manifest() -> None:
 
 
 def configure_mlflow() -> None:
-    """Use a project-local, named experiment so runs do not depend on cwd."""
+    """
+    Use a project-local, named experiment so runs do not depend on cwd.
+
+    mlflow>=3.15 refuses the filesystem tracking backend by default (it's in
+    maintenance mode upstream, pushing everyone toward a database backend
+    like SQLite). Opted into MLFLOW_ALLOW_FILE_STORE=true rather than adding
+    a SQLite dependency -- this project is deliberately local-first with no
+    infra beyond what solves a real problem (see docs/PROJECT_SCOPE.md), and
+    filesystem-backed local runs still work fine at this project's scale.
+    Revisit if mlflow ever drops filesystem support outright, not just
+    gates it behind a flag.
+    """
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
     MLFLOW_TRACKING_DIR.mkdir(parents=True, exist_ok=True)
     mlflow.set_tracking_uri(MLFLOW_TRACKING_DIR.resolve().as_uri())
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)

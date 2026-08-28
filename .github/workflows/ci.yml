@@ -13,3 +13,15 @@ jobs:
       - run: pip install -r requirements.txt
       - run: pip install -e .
       - run: pytest tests/
+
+      - name: Build image
+        run: docker build -t fraud-api:${{ github.sha }} .
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: fraud-api:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
