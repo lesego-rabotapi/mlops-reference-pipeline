@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.mlflow/
+data/
+tests/
+docs/
+.claude/
+.pytest_cache/
+*.zip

@@ -1,0 +1,28 @@
+# Why this file exists: brings up the inference API alongside the same
+# local observability stack a production deployment would use, without
+# requiring any cloud infrastructure.
+# Responsible for: wiring api -> prometheus -> grafana together on one
+# network, so Prometheus can reach the API by service name and Grafana can
+# reach Prometheus the same way.
+# Must not: expose credentials or depend on anything outside this repo.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

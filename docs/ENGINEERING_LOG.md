@@ -490,8 +490,83 @@ demonstrable today instead of turning into a second half-built pipeline.
 
 ---
 
+## Entry 10: Containerizing the inference API — a smooth build, and what almost looked like a bug but wasn't
+
+**Observation.** Built `Dockerfile`, `prometheus.yml`, and
+`docker-compose.yml` for the already-working `src/serving/` API, then
+verified the full stack (API, Prometheus, Grafana) end to end, including
+proving a Grafana panel actually reflects live traffic rather than just
+rendering. Worth logging honestly what did and didn't go wrong, per this
+document's own principle: entries record what actually happened, not a
+manufactured story to fill the template.
+
+**Analysis.** Nothing here broke in a way that needed a real fix. Three
+things were still worth noting:
+
+1. Both `docker build` and the first `docker compose up` ran past this
+   session's command timeouts (5 minutes, then 3 minutes) and had to be
+   backgrounded. Not a bug -- `requirements.txt` pulls in mlflow, sklearn,
+   pandas, and matplotlib, and the first `docker compose up` also had to
+   pull the `prom/prometheus` and `grafana/grafana` images cold. The
+   final image is 1.32GB. Slow, not broken, but worth knowing in advance
+   rather than being surprised by it.
+2. Right after `docker compose up` reported the `api` container as `Up`,
+   `docker compose logs api` came back completely empty for a moment --
+   which looks exactly like a silent startup failure. It wasn't: uvicorn
+   and the manifest-hash-check logging simply hadn't been written yet at
+   the exact instant `docker compose ps` was checked. Rechecking a few
+   seconds later showed the same clean startup sequence confirmed earlier
+   in the standalone container test. Worth flagging specifically because
+   this is the kind of race that could send someone chasing a startup bug
+   that was never there.
+3. No `.dockerignore` existed yet, so the first build would have sent the
+   full build context, including `.venv/` (hundreds of MB), to the Docker
+   daemon even though the `Dockerfile` never copies it in. Added one
+   before building, scoped to the same kind of thing `.gitignore` already
+   excludes plus `tests/`, `docs/`, and `.git/`.
+
+**Decision.** Verified "the Grafana panel actually moves" the same way
+the metric itself gets read, not by trusting that it should: queried
+`predictions_total` through Grafana's own datasource-proxy API
+(`/api/datasources/proxy/uid/.../api/v1/query`, the exact path the panel
+uses) before and after sending five real `/predict` requests through the
+running compose stack, and confirmed `0 -> 5` after the next scrape
+interval. Did the same for the latency panel's query
+(`histogram_quantile(0.5, rate(prediction_latency_seconds_bucket[5m]))`),
+which returned a real, non-zero value once traffic existed. A dashboard
+screenshot would have shown a render; querying the same path Grafana
+itself queries proves the data behind it is real and moving.
+
+**Tradeoffs.** None worth noting -- this genuinely was the straightforward
+case. The Dockerfile, compose file, and Prometheus config all worked on
+the first attempt against the design from the earlier plan, largely
+because the inference API underneath had already been built and
+manually verified in the previous session before any of this started.
+
+**Lessons learned.**
+- Not every entry needs a dramatic failure to be worth writing. A clean
+  build is itself useful evidence that the design work done beforehand
+  (the plan, the manifest-hash check, the already-tested API) paid off --
+  logging that plainly is more honest than inventing friction that wasn't
+  there.
+- A container reporting "Up" and a container's application actually
+  having logged anything are two different moments, sometimes by a
+  couple of seconds. Don't read an empty log immediately after "Up" as a
+  failure signal without rechecking.
+- When verifying a dashboard shows real data, query through the same
+  path the dashboard itself uses (Grafana's proxy, not a shortcut through
+  the data source directly) -- it's the difference between "the numbers
+  exist somewhere" and "the panel would actually show this."
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
-- **No CI.** The GX bug (Entry 5) is exactly the kind of regression a
-  `pytest`-on-push GitHub Actions workflow would catch automatically.
-  Planned per `CLAUDE.md`'s roadmap; not yet built.
+- **CI's Trivy step.** `.github/workflows/ci.yml` runs install and tests
+  but has no container security scan yet -- now that `Dockerfile` exists,
+  this is unblocked.
+- **`docs/GOVERNANCE.md` and `docs/MONITORING.md`.** Per
+  `LOCAL_COMPLETION_GUIDE.md`'s Governance and Operations phase, neither
+  exists yet. `MONITORING.md` in particular can now describe real,
+  verified metrics (`predictions_total`, `prediction_latency_seconds`)
+  rather than planned ones.
