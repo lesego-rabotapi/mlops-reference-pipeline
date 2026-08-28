@@ -634,15 +634,91 @@ about the model or pipeline's actual behavior.
 
 ---
 
+## Entry 12: Triaging the remaining 42 HIGH findings — 41 fixed, 1 genuinely blocked
+
+**Observation.** Entry 11 fixed the one CRITICAL finding (`mlflow`) and
+left 42 HIGH findings open across 3 OS packages and 8 Python packages,
+tracked as an open item rather than ignored. Triaged all of them: checked
+what depends on each vulnerable package, upgraded what could be upgraded
+safely, and verified the result against the real image, not just against
+`pip`'s dependency resolver saying yes.
+
+**Analysis.** None of the 8 Python packages are imported directly by this
+project's own code -- `GitPython`, `sqlparse`, and `starlette` come in
+through `mlflow-skinny`; `aiohttp` and `cryptography` through `mlflow`;
+`pillow` through `matplotlib`; `mistune` through `great_expectations`;
+`pyasn1` through `google-auth`. That matters for risk: an upgrade here
+can only break something by breaking *their* usage of the package, not
+ours directly, but it can still break behavior we depend on through them
+(this is exactly what happened with `starlette`, see below). The 3 OS
+findings (`libssl3t64`, `openssl`, `openssl-provider-legacy`) were all one
+Debian security update the base image's snapshot hadn't picked up yet --
+not something `pip` touches at all.
+
+Upgrading `cryptography` to its lowest reported fix version
+(`>=48.0.1`) without a ceiling immediately caught a real conflict `pip`
+itself flagged: it resolved to `50.0.1`, but `mlflow==3.15.2` requires
+`cryptography<50`. Re-pinned to `49.0.0` -- still past every fix boundary
+Trivy reported (`48.0.1`), still inside mlflow's declared constraint.
+
+`starlette` was the one requiring real verification rather than trusting
+`pip`: FastAPI declares `starlette>=0.46.0` with no upper bound, so `pip`
+happily jumped `0.52.1 -> 1.6.0`, a major version bump. Tested against
+both the in-process `TestClient` (all 6 serving tests pass) and a real
+running `uvicorn` server hit with actual `curl` requests, since
+`TestClient` runs in-process and can mask ASGI-server-level breakage that
+only shows up against a real server. Both came back clean, and produced
+the identical `fraud_probability: 0.18` every prior real-server test in
+this project has produced for the same input.
+
+**Decision.** Upgraded 7 of 8 Python packages
+(`GitPython`, `aiohttp`, `pillow`, `mistune`, `pyasn1`, `sqlparse`,
+`starlette`) plus `cryptography` (capped at `<50` per mlflow's own
+constraint) in `requirements.txt`. Added `RUN apt-get update && apt-get
+upgrade -y` to the `Dockerfile`, right after `FROM`, to close the 3 OS
+findings -- the base image's own security patches, not anything `pip`
+manages.
+
+One finding stays open on purpose: `cryptography`'s remaining CVE
+(CVE-2026-69247) is fixed in `50.0.0`, but `mlflow==3.15.2` pins
+`cryptography<50`. Forcing `50.0.0` would break `pip check` and risk
+mlflow's actual behavior for a dependency this project doesn't call
+directly -- not a trade worth making today. This is a real, verified
+constraint, not a shortcut: confirmed via `pip install
+"cryptography>=48.0.1,<50"` and `pip check` reporting "No broken
+requirements found" at `49.0.0`, versus a real conflict at `50.0.1`.
+
+**Tradeoffs.** Rebuilt the image and reran the full test suite, a real
+training run was not needed here (none of these 8 packages touch
+training/feature logic), but the serving path specifically needed the
+real-server check given the `starlette` major bump. Final scan: **44
+findings -> 1**, and that 1 is a documented, upstream-blocked wait rather
+than an unexamined gap.
+
+**Lessons learned.**
+- "Nothing in `src/` imports this package" lowers the risk of an
+  upgrade, it doesn't eliminate it. `starlette` proved that: FastAPI's
+  behavior on top of it is exactly the thing that could have broken, and
+  did need real verification (TestClient plus a real server), not an
+  assumption that "we don't call it directly" meant "safe to skip
+  testing."
+- When `pip`'s resolver picks a version that conflicts with another
+  package's declared constraint, that's a signal to worry about, not a
+  warning to scroll past. `pip check` after every batch upgrade is what
+  caught the `cryptography` conflict before it became a runtime problem
+  instead of an install-time one.
+- A security backlog doesn't have to hit zero to be honest. One
+  documented, upstream-blocked finding with a clear reason is a
+  completely different thing from 42 unexamined ones -- the goal was
+  triage, not a fabricated clean scan.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
-- **42 remaining HIGH-severity findings from the Trivy scan** (`mistune`,
-  `pillow`, `pyasn1`, `sqlparse`, `starlette`, and 3 OS-level packages in
-  `python:3.12-slim`) are not yet upgraded -- only the CRITICAL
-  `mlflow` finding was addressed in Entry 11. CI's Trivy step will fail
-  on these until they're triaged; re-run
-  `docker run --rm aquasec/trivy:latest image --severity HIGH,CRITICAL
-  --ignore-unfixed fraud-api:local` to see the current list.
+- **`cryptography` CVE-2026-69247** (HIGH, fixed in `50.0.0`) stays open:
+  `mlflow==3.15.2` pins `cryptography<50`. Revisit once mlflow relaxes
+  that constraint or this project's mlflow dependency changes.
 - **`docs/GOVERNANCE.md` and `docs/MONITORING.md`.** Per
   `LOCAL_COMPLETION_GUIDE.md`'s Governance and Operations phase, neither
   exists yet. `MONITORING.md` in particular can now describe real,
