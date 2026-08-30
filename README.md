@@ -94,6 +94,9 @@ plan in:
 - [docs/LOCAL_COMPLETION_GUIDE.md](docs/LOCAL_COMPLETION_GUIDE.md)
 - [docs/BUILD.md](docs/BUILD.md)
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component decisions and the AWS service mapping
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md) — data, model, artifact, approval, rollback, and retention practices
+- [docs/MONITORING.md](docs/MONITORING.md) — what's actually monitored locally, verified working, and how it maps to CloudWatch
 
 These documents define how decisions should be explained, how code should be
 reviewed, how the project should be completed locally, and how every
