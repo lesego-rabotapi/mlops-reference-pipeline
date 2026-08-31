@@ -14,6 +14,12 @@ jobs:
       - run: pip install -e .
       - run: pytest tests/
 
+      - name: Run the pipeline (validate -> features -> train)
+        run: |
+          python -m src.validation.validate_data
+          python -m src.features.build_features
+          python -m src.training.train_model
+
       - name: Build image
         run: docker build -t fraud-api:${{ github.sha }} .
 
