@@ -13,6 +13,8 @@ REQUIRED_MODULES = [
     "great_expectations",
     "mlflow",
     "fastapi",
+    "uvicorn",
+    "prometheus_client",
     "pytest",
     "joblib",
 ]
@@ -40,8 +42,12 @@ def main() -> int:
     required_paths = [
         Path("src/validation/validate_data.py"),
         Path("src/features/build_features.py"),
+        Path("src/training/train_model.py"),
+        Path("src/serving/main.py"),
         Path("tests/test_validate_data.py"),
         Path("tests/test_build_features.py"),
+        Path("tests/test_train_model.py"),
+        Path("tests/test_serving.py"),
         Path("docs/PROJECT_SCOPE.md"),
         Path("docs/LOCAL_COMPLETION_GUIDE.md"),
     ]

@@ -31,7 +31,6 @@ SCHEMA_RULE_NAMES = [
 
 @dataclass(frozen=True)
 class ValidationResult:
-    
     """Single validation check result that can be stored in reports."""
 
     rule_name: str

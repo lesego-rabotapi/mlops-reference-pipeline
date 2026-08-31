@@ -67,17 +67,24 @@ Implemented stages:
   artifact manifests, and training tests
 - Dataset predictive-signal assessment, separate from structural
   validation -- see [docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)
+- FastAPI inference service with a startup manifest-hash check against
+  training-serving skew, `/health`, `/predict`, and Prometheus-format
+  `/metrics`
+- Docker image and a docker-compose stack (FastAPI + Prometheus +
+  Grafana) for local observability, both verified end to end
+- GitHub Actions CI: install, test, build the image, and scan it with
+  Trivy
 
 **Current status:** the raw dataset (`fraud_raw.csv`) passes every
 structural validation check but was assessed and rejected for supervised
 learning -- statistical evidence points to `is_fraud` being generated
 independently of the other features (see
-[docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)). A regenerated
-dataset with a documented, feature-dependent labeling process is pending
-before further training/serving work builds on top of it.
-
-Planned stages: FastAPI serving, Docker, GitHub Actions CI with Trivy, and
-Prometheus/Grafana observability.
+[docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)). A PaySim
+alternative was evaluated and rejected as an unnecessary pivot; the
+project stays on this dataset by decision, not by default, with the
+deliverable framed around a pipeline that correctly identifies its input
+can't support a supervised model, rather than a working classifier. See
+[docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md), Entries 7 and 9.
 
 See [docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md) for the reasoning
 behind these decisions -- not just what was built, but why, what
@@ -102,6 +109,23 @@ These documents define how decisions should be explained, how code should be
 reviewed, how the project should be completed locally, and how every
 implementation should connect back to production MLOps concerns.
 
+## Inspecting MLflow Runs
+
+Every `make train` run is logged to a project-local MLflow tracking
+directory (`.mlflow/`). To browse runs, compare metrics across them, or
+pull an older run's artifacts:
+
+```bash
+mlflow ui --backend-store-uri file://$(pwd)/.mlflow
+```
+
+Then open `http://localhost:5000`. Each run's page shows its parameters,
+metrics, and logged artifacts (model, evaluation report, manifest) — the
+same three files `artifacts/training/` holds for the most recent run, but
+kept for every run rather than overwritten by the next one. See
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md) for how this doubles as the
+project's de facto model history in the absence of a formal registry.
+
 ## Local Commands
 
 ```bash
@@ -110,8 +134,6 @@ make validate
 make features
 make train
 make test
-
-# Once serving and observability stages are complete:
 make serve          # start FastAPI locally
 docker compose up   # start FastAPI + Prometheus + Grafana
 ```
