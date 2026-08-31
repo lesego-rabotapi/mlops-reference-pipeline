@@ -18,7 +18,7 @@ RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 # Dependencies copied and installed before source, so an edit to src/
 # doesn't bust this layer's build cache on rebuild.
 COPY requirements.txt pyproject.toml ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=100 --retries=5 -r requirements.txt
 
 COPY src/ ./src/
 COPY artifacts/ ./artifacts/

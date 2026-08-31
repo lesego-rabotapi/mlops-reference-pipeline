@@ -11,3 +11,4 @@ artifacts/
 !/data/raw/fraud_raw.csv
 .pytest_cache/
 *.zip
+*.egg-info/
