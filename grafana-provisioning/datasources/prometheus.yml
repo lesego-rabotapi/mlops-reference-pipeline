@@ -1,0 +1,16 @@
+# Provisions the Prometheus datasource declaratively, so it exists on
+# every fresh `docker compose up` without a human clicking through
+# Grafana's UI. Previously this was built once via a live API call
+# against a container with no persisted volume -- meaning it vanished
+# the moment that specific container was ever removed. See
+# docs/ENGINEERING_LOG.md for the entry documenting this fix.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

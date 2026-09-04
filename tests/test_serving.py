@@ -98,6 +98,18 @@ def _write_matching_artifacts(tmp_path) -> dict[str, object]:
     return {"model": model_path, "preprocessor": preprocessor_path, "manifest": manifest_path}
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """
+    The Limiter's request counts live in module-level storage on
+    serving.app, not per-TestClient -- without this, whichever test
+    happens to run after enough /predict calls would start seeing 429s
+    caused by an earlier test's traffic, not its own.
+    """
+    serving.limiter.reset()
+    yield
+
+
 @pytest.fixture
 def api_client(tmp_path, monkeypatch):
     """A TestClient wired to a real, matching, temporary artifact set."""
@@ -160,3 +172,17 @@ def test_startup_fails_loudly_on_a_tampered_model(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="does not match the manifest"):
         with TestClient(serving.app):
             pass
+
+
+def test_predict_is_rate_limited(api_client):
+    """
+    /predict is capped at 10/minute per client (main.py). The 11th request
+    from the same TestClient (same key under get_remote_address) within
+    the window should be rejected with 429, not served.
+    """
+    for _ in range(10):
+        response = api_client.post("/predict", json=VALID_PAYLOAD)
+        assert response.status_code == 200
+
+    response = api_client.post("/predict", json=VALID_PAYLOAD)
+    assert response.status_code == 429

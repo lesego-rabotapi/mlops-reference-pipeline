@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -12,6 +12,10 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from src.config.paths import MANIFEST_PATH, MODEL_PATH, PREPROCESSOR_PATH
 from src.serving.schemas import HealthResponse, PredictionRequest, PredictionResponse
@@ -84,6 +88,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Fraud Detection Inference API", lifespan=lifespan)
 
+# A single scored request already costs a model call; "10/minute" is generous
+# enough not to interfere with normal demo/test traffic while still being
+# tight enough to actually trigger a 429 in a quick manual check. Keyed by
+# remote address since this API has no auth layer to key on instead.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
@@ -93,7 +106,8 @@ def health() -> HealthResponse:
 
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict(request: PredictionRequest) -> PredictionResponse:
+@limiter.limit("10/minute")
+def predict(request: Request, payload: PredictionRequest) -> PredictionResponse:
     """
     Score one transaction.
 
@@ -104,7 +118,7 @@ def predict(request: PredictionRequest) -> PredictionResponse:
     preprocessor or model can't actually score.
     """
     with PREDICTION_LATENCY.time():
-        row = pd.DataFrame([request.model_dump()])
+        row = pd.DataFrame([payload.model_dump()])
         try:
             transformed = app.state.preprocessor.transform(row)
             probability = float(app.state.model.predict_proba(transformed)[0, 1])

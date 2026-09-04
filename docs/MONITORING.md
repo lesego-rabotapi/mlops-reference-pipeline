@@ -40,9 +40,15 @@ that hostname from your host machine directly. Scrape interval is 15s
 
 ## The Grafana dashboard
 
-Built via Grafana's HTTP API (not clicked together by hand, so it's
-reproducible) — one data source (Prometheus, `http://prometheus:9090`)
-and one dashboard (`Fraud API`, uid `ahr7db`) with two panels:
+Provisioned as code (`grafana-provisioning/`), not clicked together by
+hand and not built via a one-off API call against a container's ephemeral
+state — see `docs/ENGINEERING_LOG.md` for the entry documenting why the
+API-built version didn't survive a container recreate, and the fix. On
+every `docker compose up`, Grafana reads
+`grafana-provisioning/datasources/prometheus.yml` and
+`grafana-provisioning/dashboards/fraud-api.json` and reproduces one data
+source (Prometheus, `http://prometheus:9090`) and one dashboard
+(`Fraud API`, uid `ahr7db`) with two panels:
 
 - **Predictions Total** — `predictions_total`
 - **Prediction Latency (p50)** — `histogram_quantile(0.5, rate(prediction_latency_seconds_bucket[1m]))`
@@ -76,12 +82,15 @@ anything real.
 ```bash
 docker compose up
 ```
-Then:
+Grafana's admin credentials are no longer the default — they're read
+from `.env` (copy `.env.example`, set a real `GRAFANA_ADMIN_PASSWORD`
+before first run; `docker-compose.yml` refuses to start Grafana without
+it). Then:
 - `http://localhost:8000/health` — API alive
 - `http://localhost:9090/targets` — confirm `fraud-api` shows `UP`
-- `http://localhost:3000` (login `admin`/`admin`) — the `Fraud API`
-  dashboard; send a few `/predict` requests via `curl` and watch the
-  panels move
+- `http://localhost:3000` (login with the credentials from your `.env`)
+  — the `Fraud API` dashboard; send a few `/predict` requests via `curl`
+  and watch the panels move
 
 ## Cloud mapping
 

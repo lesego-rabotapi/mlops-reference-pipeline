@@ -714,13 +714,91 @@ than an unexamined gap.
 
 ---
 
+## Entry 13: Grafana state that didn't survive a container recreate, and `/predict` with no rate limit
+
+**Observation.** An independent review session flagged three real gaps:
+the live Grafana dashboard showed one panel while `docs/MONITORING.md`
+documented two, Grafana was still running on the image's default
+`admin`/`admin` login, and `/predict` had no rate limiting at all --
+anyone (or anything mis-firing in a loop) could hit the model endpoint
+as fast as the network allowed.
+
+**Analysis.** The dashboard drift traced back to how it was built in the
+first place (Entry 10): a live call against Grafana's HTTP API, against
+a container with no persisted volume for `/var/lib/grafana`. That's not
+a bug in the dashboard JSON, it's a bug in where the state lived --
+every field in it, including the admin password, existed only in one
+specific container's writable layer and was gone the moment that
+container was recreated instead of just restarted. The default-password
+finding was the same root cause wearing a different hat: nothing in
+`docker-compose.yml` ever set a real password, so Grafana fell back to
+its own default on every fresh container. `/predict` having no rate
+limit wasn't a drift problem, just a genuine gap -- the endpoint does a
+real model call per request and had nothing between it and the network.
+
+**Decision.** Replaced the one-off API build with provisioning-as-code:
+`grafana-provisioning/datasources/prometheus.yml` and
+`grafana-provisioning/dashboards/{dashboard-provider.yml,fraud-api.json}`,
+mounted read-only into the container and matched exactly to what
+`MONITORING.md` already (correctly) described -- same uid (`ahr7db`),
+same two panels -- so the fix is "make the doc true" rather than
+"rewrite the doc." Added a named `grafana-data` volume so
+`/var/lib/grafana` survives a `docker compose down`/`up` even without
+provisioning. Moved the admin password into `.env` (gitignored, real
+value generated with `secrets.token_urlsafe`) with `.env.example`
+committed as the template, and `docker-compose.yml` reading it via
+`${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}` --
+missing the var fails the compose file outright instead of silently
+falling back to Grafana's own default, which is the failure mode that
+caused this finding in the first place.
+
+For rate limiting, added `slowapi` (`Limiter` keyed on
+`get_remote_address`, since this API has no auth layer to key on
+instead) and capped `/predict` specifically at `10/minute` --
+`/health` and `/metrics` stay unthrottled since Prometheus scrapes
+`/metrics` on its own schedule and shouldn't be able to trip a limit
+meant for external callers. Added `test_predict_is_rate_limited`
+(10 requests succeed, the 11th gets a 429) plus an autouse
+`_reset_rate_limiter` fixture, since `Limiter`'s request counts live in
+module-level storage on `serving.app`, not per-`TestClient` -- without
+the reset, whichever test happened to run after enough accumulated
+`/predict` calls would start failing on traffic that wasn't its own.
+
+**Tradeoffs.** `10/minute` is a judgment call, not a measured production
+number -- there's no real traffic pattern to size it against yet. It's
+picked to be generous enough not to interfere with a demo or the test
+suite while still being tight enough to actually trigger a 429 in a
+quick manual check, which is what this project needs it to prove right
+now. Ran the full suite after both changes: 81/81 (80 prior +
+`test_predict_is_rate_limited`).
+
+**Lessons learned.**
+- State built via a live API call against a container is exactly as
+  durable as that specific container -- if the fix the first time is
+  "call the API again," the actual bug (no persisted volume, no
+  provisioning) is still there waiting for the next `docker compose
+  down`. Provisioning-as-code turns "reproduce it if you notice it's
+  gone" into "it can't be gone."
+- `${VAR:?message}` in compose files is worth reaching for over a plain
+  `${VAR}` any time the fallback behavior (silently using nothing, or
+  an image's own default) is itself the security problem you're trying
+  to close.
+- A rate limiter implemented as a module-level singleton needs the same
+  test-isolation attention as any other shared global -- it doesn't
+  announce itself as shared state the way a database connection does,
+  but it behaves like one across a test session.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **`cryptography` CVE-2026-69247** (HIGH, fixed in `50.0.0`) stays open:
   `mlflow==3.15.2` pins `cryptography<50`. Revisit once mlflow relaxes
   that constraint or this project's mlflow dependency changes.
-- **`docs/GOVERNANCE.md` and `docs/MONITORING.md`.** Per
-  `LOCAL_COMPLETION_GUIDE.md`'s Governance and Operations phase, neither
-  exists yet. `MONITORING.md` in particular can now describe real,
-  verified metrics (`predictions_total`, `prediction_latency_seconds`)
-  rather than planned ones.
+- **`docs/GOVERNANCE.md`.** Per `LOCAL_COMPLETION_GUIDE.md`'s Governance
+  and Operations phase, this doesn't exist yet. `MONITORING.md` now
+  exists and describes real, provisioned, verified state (Entry 13).
+- **`10/minute` on `/predict` is unvalidated against real traffic.**
+  Picked as a reasonable demo/test value, not measured against any
+  actual usage pattern -- revisit if this project ever serves real
+  traffic.
