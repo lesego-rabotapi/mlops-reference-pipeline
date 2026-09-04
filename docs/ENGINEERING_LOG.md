@@ -795,9 +795,6 @@ now. Ran the full suite after both changes: 81/81 (80 prior +
 - **`cryptography` CVE-2026-69247** (HIGH, fixed in `50.0.0`) stays open:
   `mlflow==3.15.2` pins `cryptography<50`. Revisit once mlflow relaxes
   that constraint or this project's mlflow dependency changes.
-- **`docs/GOVERNANCE.md`.** Per `LOCAL_COMPLETION_GUIDE.md`'s Governance
-  and Operations phase, this doesn't exist yet. `MONITORING.md` now
-  exists and describes real, provisioned, verified state (Entry 13).
 - **`10/minute` on `/predict` is unvalidated against real traffic.**
   Picked as a reasonable demo/test value, not measured against any
   actual usage pattern -- revisit if this project ever serves real
