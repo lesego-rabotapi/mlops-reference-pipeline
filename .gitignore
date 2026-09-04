@@ -12,3 +12,4 @@ artifacts/
 .pytest_cache/
 *.zip
 *.egg-info/
+docs/MENTORSHIP_OPERATING_PLAN.md

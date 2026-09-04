@@ -93,10 +93,8 @@ alternatives were rejected, and what went wrong along the way.
 ## Mentorship And Engineering Standards
 
 This project is also used as an engineering apprenticeship exercise. Future
-implementation, review, and design work should follow the mentorship operating
-plan in:
+implementation, review, and design work should follow the standards in:
 
-- [docs/MENTORSHIP_OPERATING_PLAN.md](docs/MENTORSHIP_OPERATING_PLAN.md)
 - [docs/PROJECT_SCOPE.md](docs/PROJECT_SCOPE.md)
 - [docs/LOCAL_COMPLETION_GUIDE.md](docs/LOCAL_COMPLETION_GUIDE.md)
 - [docs/BUILD.md](docs/BUILD.md)

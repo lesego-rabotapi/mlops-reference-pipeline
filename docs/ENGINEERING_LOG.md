@@ -8,11 +8,10 @@ what went wrong along the way. The goal is that the thinking behind this
 pipeline can be studied and replicated on its own, not just inferred from
 the code.
 
-Each entry follows the pattern from
-[MENTORSHIP_OPERATING_PLAN.md](MENTORSHIP_OPERATING_PLAN.md): Observation,
-Analysis, Decision, Tradeoffs, plus a Lessons Learned section. That last
-part is usually the most worth rereading later, since it's the part that
-generalizes past this specific repo.
+Each entry follows the same pattern: Observation, Analysis, Decision,
+Tradeoffs, plus a Lessons Learned section. That last part is usually the
+most worth rereading later, since it's the part that generalizes past
+this specific repo.
 
 Entries get appended as work happens, not rewritten afterward. If a later
 entry contradicts an earlier one, both stay. That's part of the record
