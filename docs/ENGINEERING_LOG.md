@@ -834,9 +834,36 @@ noted, not a behavior change, silenceable via `MLFLOW_DISABLE_AGENT_HINT=1`.
 
 ---
 
+## Entry 15: Tightening `/predict`'s rate limit from 10/minute to 1/minute
+
+**Observation.** Entry 13 picked `10/minute` as a reasonable default with
+no real traffic to size it against. Decided to tighten it to `1/minute`
+instead -- still a judgment call, not a measured number, but a more
+conservative one for a demo endpoint that has no auth layer in front of
+it.
+
+**Decision.** Changed the decorator in `src/serving/main.py` to
+`@limiter.limit("1/minute")` and updated `test_predict_is_rate_limited`
+to match: 1 request succeeds, the 2nd within the window gets a 429
+(previously 10 succeeding, then the 11th failing).
+
+**Tradeoffs.** `1/minute` will visibly throttle even light manual
+testing or a demo sending a couple of requests back to back -- that's
+the point, not a bug, but worth knowing before recording a demo against
+this endpoint. Ran the full suite after the change: 81/81.
+
+**Lessons learned.**
+- This value has been picked twice now (Entry 13, this entry) with no
+  real traffic data behind either choice -- both entries stay in the
+  log rather than editing Entry 13's number in place, since the
+  reasoning at each point in time is part of the record, not just the
+  final number.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
-- **`10/minute` on `/predict` is unvalidated against real traffic.**
-  Picked as a reasonable demo/test value, not measured against any
+- **`1/minute` on `/predict` is unvalidated against real traffic.**
+  Picked as a conservative demo/test value, not measured against any
   actual usage pattern -- revisit if this project ever serves real
   traffic.

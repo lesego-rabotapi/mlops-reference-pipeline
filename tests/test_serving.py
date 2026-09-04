@@ -176,13 +176,12 @@ def test_startup_fails_loudly_on_a_tampered_model(tmp_path, monkeypatch):
 
 def test_predict_is_rate_limited(api_client):
     """
-    /predict is capped at 10/minute per client (main.py). The 11th request
+    /predict is capped at 1/minute per client (main.py). The 2nd request
     from the same TestClient (same key under get_remote_address) within
     the window should be rejected with 429, not served.
     """
-    for _ in range(10):
-        response = api_client.post("/predict", json=VALID_PAYLOAD)
-        assert response.status_code == 200
+    response = api_client.post("/predict", json=VALID_PAYLOAD)
+    assert response.status_code == 200
 
     response = api_client.post("/predict", json=VALID_PAYLOAD)
     assert response.status_code == 429

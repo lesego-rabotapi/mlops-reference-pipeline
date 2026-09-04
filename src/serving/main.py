@@ -88,10 +88,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Fraud Detection Inference API", lifespan=lifespan)
 
-# A single scored request already costs a model call; "10/minute" is generous
-# enough not to interfere with normal demo/test traffic while still being
-# tight enough to actually trigger a 429 in a quick manual check. Keyed by
-# remote address since this API has no auth layer to key on instead.
+# Keyed by remote address since this API has no auth layer to key on
+# instead. "1/minute" is deliberately tight -- see docs/ENGINEERING_LOG.md
+# for why.
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -106,7 +105,7 @@ def health() -> HealthResponse:
 
 
 @app.post("/predict", response_model=PredictionResponse)
-@limiter.limit("10/minute")
+@limiter.limit("1/minute")
 def predict(request: Request, payload: PredictionRequest) -> PredictionResponse:
     """
     Score one transaction.

@@ -89,8 +89,9 @@ it). Then:
 - `http://localhost:8000/health` — API alive
 - `http://localhost:9090/targets` — confirm `fraud-api` shows `UP`
 - `http://localhost:3000` (login with the credentials from your `.env`)
-  — the `Fraud API` dashboard; send a few `/predict` requests via `curl`
-  and watch the panels move
+  — the `Fraud API` dashboard; `/predict` is rate-limited to 1/minute
+  per client (see `src/serving/main.py`), so send one `curl` request,
+  wait for the window to reset, and repeat to watch the panels move
 
 ## Cloud mapping
 
