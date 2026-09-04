@@ -790,11 +790,53 @@ now. Ran the full suite after both changes: 81/81 (80 prior +
 
 ---
 
+## Entry 14: Closing the last open Trivy finding — `mlflow` relaxed the `cryptography` pin
+
+**Observation.** Entry 12 left one finding open on purpose:
+CVE-2026-69247 in `cryptography` was fixed in `50.0.0`, but
+`mlflow==3.15.2` pinned `cryptography<50`, so the fix was capped at
+`49.0.0` pending mlflow relaxing that constraint. Checked whether a
+newer mlflow had done so, rather than assuming the block was permanent.
+
+**Analysis.** `pip index versions mlflow` showed `3.16.0` available.
+Rather than trust a changelog or install it outright, downloaded the
+wheel with `pip download --no-deps` and read its `METADATA` directly:
+`mlflow==3.16.0` declares `Requires-Dist: cryptography<51,>=43.0.0` --
+the `<50` ceiling is gone. `mlflow-skinny` and `mlflow-tracing` at the
+same version don't declare a `cryptography` constraint at all; the pin
+lives entirely in `mlflow`'s own metadata.
+
+**Decision.** Upgraded `mlflow`/`mlflow-skinny`/`mlflow-tracing` to
+`3.16.0` and `cryptography` to `50.0.1` (latest at time of upgrade,
+past the `50.0.0` fix boundary). `pip check` reports no broken
+requirements. Deleted `.trivyignore` entirely rather than leaving it
+empty or stale, since the one entry it existed to justify no longer
+applies.
+
+**Tradeoffs.** Verified with the same bar as Entry 11's `starlette`
+bump: not just `pip check` passing, but a real run. Full test suite
+(81/81) and a real `validate -> features -> train` run against the
+actual dataset, confirming `roc_auc=0.5083` -- byte-identical to every
+prior documented run -- and that mlflow's tracking calls
+(`run_training()`'s `mlflow.start_run()`/`log_metric()`/etc.) still
+work end to end, not just import cleanly. mlflow 3.16 does add a new
+first-run "agent hint" info message about its tracing-skill feature;
+noted, not a behavior change, silenceable via `MLFLOW_DISABLE_AGENT_HINT=1`.
+
+**Lessons learned.**
+- "Blocked pending upstream" is a state to periodically re-check, not a
+  permanent label -- the fix here was one `pip index versions` and one
+  `pip download --no-deps` + metadata read away, without needing to
+  install anything speculatively into the working environment first.
+- Reading a wheel's `METADATA` directly is a cheap way to confirm a
+  dependency constraint changed before committing to an upgrade --
+  faster and more certain than trusting a changelog's prose, and
+  doesn't require polluting the venv with a trial install first.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
-- **`cryptography` CVE-2026-69247** (HIGH, fixed in `50.0.0`) stays open:
-  `mlflow==3.15.2` pins `cryptography<50`. Revisit once mlflow relaxes
-  that constraint or this project's mlflow dependency changes.
 - **`10/minute` on `/predict` is unvalidated against real traffic.**
   Picked as a reasonable demo/test value, not measured against any
   actual usage pattern -- revisit if this project ever serves real
