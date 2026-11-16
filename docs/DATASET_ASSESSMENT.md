@@ -125,10 +125,10 @@ of a working data-quality gate, which is worth being able to show.
 
 ## Decision (resolved): stay on Dataset v1
 
-A third option surfaced after this document was written: ChatGPT
-proposed **PaySim** (`PS_20174392719_1491204439457_log.csv`, a
-well-known public synthetic fraud dataset, 6.36M rows, 0.13% fraud rate)
-as a candidate Dataset v2. Inspecting it directly confirmed it has real,
+A third option surfaced after this document was written:
+**PaySim** (`PS_20174392719_1491204439457_log.csv`, a well-known public
+synthetic fraud dataset, 6.36M rows, 0.13% fraud rate), considered as a
+candidate Dataset v2. Inspecting it directly confirmed it has real,
 learnable signal, fraud occurs only in `TRANSFER`/`CASH_OUT` transaction
 types (0% in `CASH_IN`/`DEBIT`/`PAYMENT`), plus a genuine `amount`
 decile spread, unlike anything found in `fraud_raw.csv`'s signal

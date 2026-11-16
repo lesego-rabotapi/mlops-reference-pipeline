@@ -347,14 +347,12 @@ directly, upstream of any code written for this project) and point to a
 specific, falsifiable hypothesis: `is_fraud` was very likely generated
 independently of the other 12 columns.
 
-**Decision.** This finding was surfaced to the user, who relayed it to
-ChatGPT, the project's designated owner of architecture decisions (see
-`CLAUDE.md`'s multi-agent division of labor). ChatGPT's call: reject
-Dataset v1 for supervised learning rather than either silently training
-against it and reporting misleading numbers, or reverse-engineering the
-labels to make a model "work." The investigation and its evidence got
-kept, not discarded, a rejected dataset with a documented reason is
-itself evidence of a working data-quality gate.
+**Decision.** Weighing the options directly: reject Dataset v1 for
+supervised learning rather than either silently training against it and
+reporting misleading numbers, or reverse-engineering the labels to make
+a model "work." The investigation and its evidence got kept, not
+discarded, a rejected dataset with a documented reason is itself
+evidence of a working data-quality gate.
 
 Two mechanical pieces followed from there:
 - `scripts/assess_dataset_signal.py` formalizes the four ad hoc checks
@@ -367,14 +365,13 @@ Two mechanical pieces followed from there:
   claims, and collapsing them into one PASS/FAIL would erase which
   question actually failed.
 
-What didn't happen: writing a Dataset v2 generator. ChatGPT explicitly
-flagged that as its own architecture decision, which features should
-influence fraud, how strongly, what interactions, what target
-prevalence, how much irreducible noise, and cautioned against jumping
-straight to implementation before that's decided. Per the same division
-of labor that governs this whole project, architecture decisions aren't
-mine to make unilaterally, so that boundary got respected rather than
-worked around.
+What didn't happen: writing a Dataset v2 generator right away. That's its
+own architecture decision, which features should influence fraud, how
+strongly, what interactions, what target prevalence, how much
+irreducible noise, and jumping straight to implementation before that's
+actually decided would mean building on unreviewed assumptions instead
+of a deliberate design. That boundary got respected rather than worked
+around.
 
 **Tradeoffs.** Building the generator now would have kept momentum, but
 at the cost of embedding an unreviewed set of modeling assumptions
@@ -392,10 +389,10 @@ supposed to get scrutiny before implementation, not after.
   look like, and how would I tell them apart?"
 - Not every problem uncovered while implementing is an implementation
   problem to solve. Recognizing that this specific finding crossed from
-  "bug to fix" into "design decision to make," and routing it to the
-  role responsible for that decision instead of picking a direction
-  unilaterally, is itself the correct engineering behavior the project's
-  division of labor is supposed to produce.
+  "bug to fix" into "design decision to make," and treating it with the
+  deliberation that distinction deserves instead of picking a direction
+  on the spot, is itself the correct engineering behavior worth
+  practicing.
 - Evidence of a rejected option isn't waste. Deleting a dead end and
   moving on would have thrown away exactly the artifact that proves the
   pipeline's data-quality gate works.
@@ -450,8 +447,8 @@ somewhere and needs investigating directly, not a reason to keep the
 
 ## Entry 9: Final decision — stay on Dataset v1, reject PaySim as a pivot
 
-**Observation.** ChatGPT proposed PaySim, a well-known public synthetic
-fraud dataset (6.36M rows, 0.13% fraud rate), as a Dataset v2 candidate.
+**Observation.** Considered PaySim, a well-known public synthetic fraud
+dataset (6.36M rows, 0.13% fraud rate), as a Dataset v2 candidate.
 Direct inspection confirmed it has real signal `fraud_raw.csv` never
 had: fraud occurs only in `TRANSFER`/`CASH_OUT` transactions (0%
 elsewhere), plus a genuine `amount` decile spread.

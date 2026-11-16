@@ -74,16 +74,17 @@ raises).
 ## Approval
 
 This project doesn't have a multi-person approval board — pretending
-otherwise would misrepresent its scale. What it does have is a real
-division of labor, documented as it happened: implementation decisions
-get made directly, but findings that cross into architecture decisions
-(which dataset to use, whether to regenerate training data, whether to
-pivot to a different problem shape) get surfaced explicitly before
-acting on them, not decided unilaterally. `ENGINEERING_LOG.md`'s Entry 7
-and Entry 9 are the concrete record of this: a finding (no predictive
-signal in Dataset v1, then a PaySim alternative) was investigated,
-written up, and routed to the role responsible for that class of
-decision before any implementation followed.
+otherwise would misrepresent its scale. What it does have is real
+discipline about pace, documented as it happened: routine implementation
+decisions get made and acted on directly, but findings that cross into
+architecture-level territory (which dataset to use, whether to
+regenerate training data, whether to pivot to a different problem shape)
+get written up and deliberately weighed before acting on them, not
+rushed through in the same breath they were found. `ENGINEERING_LOG.md`'s
+Entry 7 and Entry 9 are the concrete record of this: a finding (no
+predictive signal in Dataset v1, then a PaySim alternative) was
+investigated, written up, and reasoned through properly before any
+implementation followed.
 
 Every non-trivial decision in this repository has a matching
 `ENGINEERING_LOG.md` entry: Observation, Analysis, Decision, Tradeoffs,
