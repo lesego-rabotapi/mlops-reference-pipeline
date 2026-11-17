@@ -26,8 +26,30 @@ jobs:
           python -m src.features.build_features
           python -m src.training.train_model
 
+      # Smoke-train floor: the synthetic data is separable by construction, so
+      # a collapse here means a broken feature/preprocessing path, not bad luck.
+      - name: Assert smoke-training metrics are sane
+        run: |
+          python - <<'EOF'
+          import json
+          r = json.load(open("artifacts/training/evaluation_report.json"))
+          print(r)
+          assert r["pr_auc"] > 0.9, f"pr_auc collapsed: {r['pr_auc']}"
+          EOF
+
       - name: Build image
         run: docker build -t fraud-api:${{ github.sha }} .
+
+      - name: Smoke-test the image (health + one prediction)
+        run: |
+          docker run -d --name api -p 8000:8000 fraud-api:${{ github.sha }}
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 2; done
+          curl -sf localhost:8000/health | grep -q '"model_loaded":true'
+          curl -sf -X POST localhost:8000/predict \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"TRANSFER","amount":500,"oldbalanceOrg":500,"newbalanceOrig":0,"oldbalanceDest":50,"newbalanceDest":50}'
+          docker logs api
+          docker rm -f api
 
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0

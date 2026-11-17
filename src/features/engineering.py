@@ -24,6 +24,12 @@ def add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
         0 when the destination account was credited by exactly `amount`.
     """
     df = df.copy()
-    df["errorBalanceOrig"] = df["newbalanceOrig"] + df["amount"] - df["oldbalanceOrg"]
-    df["errorBalanceDest"] = df["oldbalanceDest"] + df["amount"] - df["newbalanceDest"]
+    # Rounded to cents: amounts/balances reach ~1e8, where float64 residuals
+    # (~1e-8) would otherwise make "exactly consistent" rows look nonzero.
+    df["errorBalanceOrig"] = (
+        df["newbalanceOrig"] + df["amount"] - df["oldbalanceOrg"]
+    ).round(2)
+    df["errorBalanceDest"] = (
+        df["oldbalanceDest"] + df["amount"] - df["newbalanceDest"]
+    ).round(2)
     return df

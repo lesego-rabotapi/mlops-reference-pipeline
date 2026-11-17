@@ -108,6 +108,7 @@ def test_training_writes_manifest_and_binary_integer_predictions(trained_artifac
     assert set(manifest) == {
         "model_hash",
         "preprocessor_hash",
+        "input_columns",
         "sklearn_version",
         "trained_at",
     }

@@ -17,6 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
+from src.config.feature_config import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 from src.config.training_config import DECISION_THRESHOLD
 from src.features.engineering import add_engineered_features
 from src.config.paths import MANIFEST_PATH, MODEL_PATH, PREPROCESSOR_PATH
@@ -54,6 +55,15 @@ def load_and_verify_artifacts() -> tuple[object, object]:
         )
 
     manifest = json.loads(MANIFEST_PATH.read_text())
+
+    expected_columns = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    if manifest.get("input_columns") != expected_columns:
+        raise RuntimeError(
+            "Artifacts were built for a different feature schema "
+            f"(manifest input_columns={manifest.get('input_columns')}, "
+            f"serving expects {expected_columns}). "
+            "Re-run the pipeline rather than serving stale artifacts."
+        )
 
     actual_model_hash = sha256_file(MODEL_PATH)
     if actual_model_hash != manifest["model_hash"]:

@@ -154,3 +154,19 @@ def test_full_feature_pipeline_writes_artifacts(paysim_df, tmp_path, monkeypatch
     y_train = pd.read_csv(paths["TRAIN_TARGET_PATH"])
     assert len(X_train) == len(y_train)
     assert X_train.shape[1] == metadata["n_features_out"]
+
+
+def test_engineered_features_are_rounded_to_cents():
+    """Float residuals on large balances must not leak in as tiny nonzero values."""
+    df = pd.DataFrame(
+        {
+            "amount": [0.1],
+            "oldbalanceOrg": [9_999_999.3],
+            "newbalanceOrig": [9_999_999.2],
+            "oldbalanceDest": [12_345_678.1],
+            "newbalanceDest": [12_345_678.2],
+        }
+    )
+    out = add_engineered_features(df)
+    assert out.loc[0, "errorBalanceOrig"] == 0.0
+    assert out.loc[0, "errorBalanceDest"] == 0.0

@@ -30,7 +30,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.config.feature_config import RANDOM_SEED
+from src.config.feature_config import (
+    CATEGORICAL_FEATURES,
+    NUMERIC_FEATURES,
+    RANDOM_SEED,
+)
 from src.config.paths import (
     EVALUATION_REPORT_PATH,
     MANIFEST_PATH,
@@ -226,6 +230,10 @@ def save_manifest() -> None:
     manifest = {
         "model_hash": sha256_file(MODEL_PATH),
         "preprocessor_hash": sha256_file(PREPROCESSOR_PATH),
+        # Raw model-input columns the serving layer must supply. Lets
+        # serving refuse artifacts built for a different schema instead
+        # of loading them and failing every request.
+        "input_columns": NUMERIC_FEATURES + CATEGORICAL_FEATURES,
         "sklearn_version": sklearn.__version__,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }

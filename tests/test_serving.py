@@ -87,6 +87,7 @@ def _write_matching_artifacts(tmp_path) -> dict[str, object]:
             {
                 "model_hash": sha256_file(model_path),
                 "preprocessor_hash": sha256_file(preprocessor_path),
+                "input_columns": NUMERIC_FEATURES + CATEGORICAL_FEATURES,
             }
         )
     )
@@ -205,3 +206,23 @@ def test_predict_is_rate_limited(api_client):
 
     response = api_client.post("/predict", json=VALID_PAYLOAD)
     assert response.status_code == 429
+
+
+def test_startup_refuses_artifacts_built_for_a_different_schema(tmp_path, monkeypatch):
+    """
+    Hashes can all match while the artifacts belong to an older feature
+    schema (e.g. a pre-migration manifest with no input_columns). Startup
+    must fail loudly instead of serving and 500-ing on every request.
+    """
+    paths = _write_matching_artifacts(tmp_path)
+    manifest = json.loads(paths["manifest"].read_text())
+    del manifest["input_columns"]
+    paths["manifest"].write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(serving, "MODEL_PATH", paths["model"])
+    monkeypatch.setattr(serving, "PREPROCESSOR_PATH", paths["preprocessor"])
+    monkeypatch.setattr(serving, "MANIFEST_PATH", paths["manifest"])
+
+    with pytest.raises(RuntimeError, match="different feature schema"):
+        with TestClient(serving.app):
+            pass
