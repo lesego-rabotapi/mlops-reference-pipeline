@@ -137,6 +137,13 @@ Command:
 make validate
 ```
 
+Getting the data: download PaySim ("Synthetic Financial Datasets For Fraud
+Detection", file `PS_20174392719_1491204439457_log.csv`, ~470MB, requires a
+free Kaggle login) and save it as `data/raw/paysim_raw.csv`. The file is
+gitignored. To exercise the pipeline without it, run
+`python scripts/make_smoke_dataset.py` for a small *synthetic* stand-in
+(it refuses to overwrite an existing file unless `--force`).
+
 Primary code:
 
 - `src/validation/validate_data.py`
@@ -144,11 +151,11 @@ Primary code:
 
 Inputs:
 
-- `data/raw/fraud_raw.csv`
+- `data/raw/paysim_raw.csv` (PaySim; see "Getting the data" above)
 
 Outputs:
 
-- `data/validated/fraud_validated.csv`
+- `data/validated/paysim_validated.csv`
 - `artifacts/validation/validation_report_<timestamp>.json`
 
 What this proves:
@@ -185,7 +192,7 @@ Primary code:
 
 Inputs:
 
-- `data/validated/fraud_validated.csv`
+- `data/validated/paysim_validated.csv`
 
 Outputs:
 
@@ -301,7 +308,7 @@ The important local artifacts are:
 | Artifact | Owner Stage | Why It Matters |
 | --- | --- | --- |
 | `artifacts/validation/*.json` | Validation | Audit trail for raw data acceptance or rejection |
-| `data/validated/fraud_validated.csv` | Validation | Trusted dataset boundary for downstream work |
+| `data/validated/paysim_validated.csv` | Validation | Trusted dataset boundary for downstream work |
 | `artifacts/features/preprocessor.joblib` | Feature engineering | Exact transformation object required by training and serving |
 | `artifacts/features/feature_metadata.json` | Feature engineering | Feature contract evidence for review and inference alignment |
 | `artifacts/training/model.joblib` | Training | Deployable model artifact |

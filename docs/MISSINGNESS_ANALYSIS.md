@@ -1,3 +1,8 @@
+> **Historical.** This analysis belongs to the rejected Dataset v1
+> (`fraud_raw.csv`). The pipeline now targets PaySim, which has no missing
+> values; the imputation code this document justified was removed (see
+> ENGINEERING_LOG Entry 17). Kept as evidence of the methodology.
+
 # Missingness Analysis: fraud.csv
 
 `data/raw/fraud_raw.csv` has real missingness in 12 of its 13 columns (only

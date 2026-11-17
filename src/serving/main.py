@@ -17,6 +17,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
+from src.config.training_config import DECISION_THRESHOLD
+from src.features.engineering import add_engineered_features
 from src.config.paths import MANIFEST_PATH, MODEL_PATH, PREPROCESSOR_PATH
 from src.serving.schemas import HealthResponse, PredictionRequest, PredictionResponse
 from src.training.train_model import sha256_file
@@ -117,7 +119,7 @@ def predict(request: Request, payload: PredictionRequest) -> PredictionResponse:
     preprocessor or model can't actually score.
     """
     with PREDICTION_LATENCY.time():
-        row = pd.DataFrame([payload.model_dump()])
+        row = add_engineered_features(pd.DataFrame([payload.model_dump()]))
         try:
             transformed = app.state.preprocessor.transform(row)
             probability = float(app.state.model.predict_proba(transformed)[0, 1])
@@ -129,7 +131,7 @@ def predict(request: Request, payload: PredictionRequest) -> PredictionResponse:
 
     PREDICTIONS_TOTAL.inc()
     return PredictionResponse(
-        is_fraud_prediction=int(probability >= 0.5),
+        is_fraud_prediction=int(probability >= DECISION_THRESHOLD),
         fraud_probability=probability,
     )
 

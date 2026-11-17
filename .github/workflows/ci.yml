@@ -14,6 +14,12 @@ jobs:
       - run: pip install -e .
       - run: pytest tests/
 
+      # The real PaySim file (~470MB, gitignored) is not in CI. This writes a
+      # SYNTHETIC PaySim-shaped dataset so the pipeline and image build are
+      # exercised; its metrics are smoke-test only, never model quality.
+      - name: Generate synthetic smoke dataset
+        run: python scripts/make_smoke_dataset.py
+
       - name: Run the pipeline (validate -> features -> train)
         run: |
           python -m src.validation.validate_data

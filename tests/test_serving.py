@@ -19,45 +19,38 @@ from fastapi.testclient import TestClient
 import src.serving.main as serving
 from src.config.feature_config import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 from src.features.build_features import build_preprocessor
+from src.features.engineering import add_engineered_features
 from src.training.train_model import build_model, sha256_file
 
 VALID_PAYLOAD = {
-    "transaction_amount": 42.50,
-    "num_items": 3,
-    "customer_age": 34,
-    "prev_transactions": 5,
-    "distance_from_home": 12.3,
-    "network_quality": 80,
-    "velocity_score": 0.4,
-    "hour_of_day": 2,
-    "is_weekend": 0,
-    "device_type": 1,
-    "is_first_transaction": 0,
-    "store_type": 1,
+    "type": "TRANSFER",
+    "amount": 500.0,
+    "oldbalanceOrg": 500.0,
+    "newbalanceOrig": 0.0,
+    "oldbalanceDest": 50.0,
+    "newbalanceDest": 50.0,
 }
 
 
-def _synthetic_training_frame(n: int = 40) -> pd.DataFrame:
-    """A tiny frame with every column build_preprocessor() expects, nothing else."""
-    rows = []
+def _synthetic_training_frame(n: int = 60) -> tuple[pd.DataFrame, pd.Series]:
+    """Raw-schema rows run through the SAME engineering function serving uses."""
+    rows, labels = [], []
     for i in range(n):
+        fraud = i % 4 == 0
+        amount = float(100 + i)
+        old_orig = amount + float(i % 7) * 10
         rows.append(
             {
-                "transaction_amount": float(i),
-                "num_items": float(i % 5),
-                "customer_age": float(20 + i % 50),
-                "prev_transactions": float(i % 10),
-                "distance_from_home": float(i % 20),
-                "network_quality": float(i % 100),
-                "velocity_score": float(i) / n,
-                "hour_of_day": float(1 + i % 3),
-                "is_weekend": float(i % 2),
-                "device_type": float(i % 3),
-                "is_first_transaction": float(i % 2),
-                "store_type": float(i % 2),
+                "type": "TRANSFER" if i % 2 else "CASH_OUT",
+                "amount": amount,
+                "oldbalanceOrg": old_orig,
+                "newbalanceOrig": 0.0 if fraud else old_orig - amount,
+                "oldbalanceDest": float(i * 3),
+                "newbalanceDest": float(i * 3) if fraud else float(i * 3) + amount,
             }
         )
-    return pd.DataFrame(rows)
+        labels.append(int(fraud))
+    return add_engineered_features(pd.DataFrame(rows)), pd.Series(labels)
 
 
 def _write_matching_artifacts(tmp_path) -> dict[str, object]:
@@ -70,10 +63,12 @@ def _write_matching_artifacts(tmp_path) -> dict[str, object]:
     .transform() and .predict_proba() -- a fake artifact would hide a
     genuinely broken pipeline instead of exercising it.
     """
-    assert set(NUMERIC_FEATURES) | set(CATEGORICAL_FEATURES) == set(VALID_PAYLOAD)
+    # Request carries raw fields only; the two engineered ones are computed
+    # server-side, so payload + engineered must equal the model's inputs.
+    engineered = {"errorBalanceOrig", "errorBalanceDest"}
+    assert set(NUMERIC_FEATURES) | set(CATEGORICAL_FEATURES) == set(VALID_PAYLOAD) | engineered
 
-    X = _synthetic_training_frame()
-    y = pd.Series([i % 2 for i in range(len(X))])
+    X, y = _synthetic_training_frame()
 
     preprocessor = build_preprocessor()
     transformed = preprocessor.fit_transform(X)
@@ -137,17 +132,42 @@ def test_predict_returns_a_probability(api_client):
 
 def test_predict_rejects_missing_field(api_client):
     incomplete = dict(VALID_PAYLOAD)
-    del incomplete["transaction_amount"]
+    del incomplete["amount"]
     response = api_client.post("/predict", json=incomplete)
     assert response.status_code == 422
-    assert "transaction_amount" in response.text
+    assert "amount" in response.text
 
 
-def test_predict_rejects_out_of_range_value(api_client):
-    invalid = dict(VALID_PAYLOAD, customer_age=250)
+def test_predict_rejects_negative_balance(api_client):
+    invalid = dict(VALID_PAYLOAD, oldbalanceOrg=-1)
     response = api_client.post("/predict", json=invalid)
     assert response.status_code == 422
-    assert "customer_age" in response.text
+    assert "oldbalanceOrg" in response.text
+
+
+def test_predict_rejects_out_of_scope_transaction_type(api_client):
+    """PAYMENT etc. have no fraud in training data; they must not get a score."""
+    response = api_client.post("/predict", json=dict(VALID_PAYLOAD, type="PAYMENT"))
+    assert response.status_code == 422
+    assert "type" in response.text
+
+
+def test_predict_flags_the_classic_drained_account_pattern(api_client):
+    """End-to-end: engineering + preprocessor + model agree on an obvious case."""
+    fraud = api_client.post("/predict", json=VALID_PAYLOAD).json()
+    serving.limiter.reset()
+    legit = api_client.post(
+        "/predict",
+        json={
+            "type": "CASH_OUT",
+            "amount": 100.0,
+            "oldbalanceOrg": 900.0,
+            "newbalanceOrig": 800.0,
+            "oldbalanceDest": 10.0,
+            "newbalanceDest": 110.0,
+        },
+    ).json()
+    assert fraud["fraud_probability"] > legit["fraud_probability"]
 
 
 def test_metrics_endpoint_is_prometheus_format(api_client):

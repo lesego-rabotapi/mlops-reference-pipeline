@@ -10,18 +10,25 @@ Must not: load data, train models, or create MLflow runs.
 from src.config.feature_config import RANDOM_SEED
 
 
-RANDOM_FOREST_PARAMS = {
-    "n_estimators": 100,
+# HistGradientBoosting rather than RandomForest: PaySim's in-scope training
+# set is ~2M rows, where a 100-tree unlimited-depth forest is slow and
+# memory-hungry and a histogram booster is both faster and usually stronger
+# on tabular data. class_weight="balanced" is kept for the same reason as
+# before: fraud is a rare event (~0.3% of the scored types) and an
+# unweighted fit optimizes as if both classes cost the same to get wrong.
+MODEL_PARAMS = {
+    "max_iter": 200,
+    "learning_rate": 0.1,
     "random_state": RANDOM_SEED,
-    # This is a rare-event classification problem (is_fraud), not a balanced
-    # one -- even at this synthetic dataset's inflated 10.3% fraud rate, an
-    # unweighted forest optimizes as if both classes cost the same to get
-    # wrong. "balanced" reweights each class inversely to its frequency
-    # (computed once on the full training set, not per bootstrap sample --
-    # "balanced_subsample" is the per-tree variant, unnecessary at this
-    # scale/imbalance level). Explicit here because the wrong default is
-    # silent: the model still trains and reports a plausible-looking
-    # accuracy without it.
     "class_weight": "balanced",
 }
+
+# Probability cutoff for the hard 0/1 prediction. NOT tuned: no cost model
+# exists yet (see docs/ENGINEERING_LOG.md open items). The threshold-free
+# metrics (pr_auc, recall_at_1pct_alerts) are the ones to compare models on.
+DECISION_THRESHOLD = 0.5
+
+# Alert-budget metric: share of transactions an analyst team could review.
+ALERT_BUDGET_FRACTION = 0.01
+
 MLFLOW_EXPERIMENT_NAME = "fraud_training"

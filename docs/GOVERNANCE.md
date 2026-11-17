@@ -11,20 +11,20 @@ here, that's said explicitly, with a pointer to what would close the gap.
 
 ## Data governance
 
-The raw dataset (`data/raw/fraud_raw.csv`) is the single source of truth
-for training data. It's gitignored deliberately (see
-`ENGINEERING_LOG.md`, the commit that untracked it) — a 750KB data file
-doesn't belong in source control, and the pipeline is designed to
-regenerate everything downstream of it on demand.
+The raw dataset (`data/raw/paysim_raw.csv`) is the single source of truth
+for training data. It's gitignored deliberately -- at ~470MB it doesn't
+belong in source control, and the pipeline regenerates everything
+downstream of it on demand. The rejected original dataset
+(`data/raw/fraud_raw.csv`) stays in git as evidence for
+`docs/DATASET_ASSESSMENT.md`.
 
-Every column's missingness is analyzed and documented before any
-imputation policy is applied — see `docs/MISSINGNESS_ANALYSIS.md` and
-`src/validation/imputation.py`'s `IMPUTATION_SPECS`. This is the data
-governance mechanism that matters most here: no column gets silently
-filled with a default. Each policy carries a `max_missing_rate` ceiling
-that halts the pipeline if a new batch drifts past what the analysis was
-validated against (`check_missing_rate_threshold`), rather than
-continuing to impute on a stale assumption.
+PaySim has no missing values, so there is no imputation policy: any null
+fails the `no_missing_values` rule and halts the stage rather than being
+filled. (The earlier per-column MCAR/imputation machinery belonged to the
+rejected dataset; its analysis is preserved in
+`docs/MISSINGNESS_ANALYSIS.md` and in git history.) The train/test split is
+chronological on `step`, so reported metrics describe performance on
+transactions *after* everything the model trained on.
 
 `data/validated/` and `data/processed/` are regenerated, not retained —
 running `make validate` or `make features` overwrites them. Nothing

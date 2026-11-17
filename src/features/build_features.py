@@ -1,10 +1,11 @@
 """
 Feature Engineering Pipeline
 
-Loads the validated dataset, splits it into train/test before any fitting
-happens (splitting after would leak test data into the transformation
-statistics), builds and fits a ColumnTransformer on the training data
-only, then transforms both sets with it. Saves the fitted preprocessor
+Loads the validated dataset, scopes it to the scored transaction types,
+adds the balance-error features, splits it CHRONOLOGICALLY into train/test
+(by the `step` time column, so the test set is strictly the future of the
+training set) before any fitting happens, builds and fits a
+ColumnTransformer on the training data only, then transforms both sets. Saves the fitted preprocessor
 for reuse at inference time, plus the processed feature matrices and
 targets.
 
@@ -26,7 +27,6 @@ import joblib
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -35,8 +35,10 @@ from src.config.feature_config import (
     COLUMNS_TO_DROP,
     NUMERIC_FEATURES,
     RANDOM_SEED,
+    SCORED_TRANSACTION_TYPES,
     TARGET_COLUMN,
-    TEST_SIZE,
+    TIME_COLUMN,
+    TRAIN_STEP_CUTOFF,
 )
 from src.config.paths import (
     FEATURES_ARTIFACTS_DIR,
@@ -49,6 +51,7 @@ from src.config.paths import (
     TRAIN_TARGET_PATH,
     VALIDATED_DATASET_PATH,
 )
+from src.features.engineering import add_engineered_features
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,16 +77,19 @@ def load_validated_data(path: Path) -> pd.DataFrame:
 
 def preprocess_raw_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply lightweight pre-split fixes that aren't really transformations,
-    just dropping identifier columns for now. These are deterministic, with
-    no learned statistics involved, so it's safe to do this before the
-    split.
+    Apply deterministic pre-split steps: scope to the scored transaction
+    types and add the engineered balance-error features. Nothing here
+    learns statistics from data, so it is safe before the split. The time
+    column and identifier columns are NOT dropped yet -- the split needs
+    `step`; see split_by_time().
     """
-    df = df.copy()
-
-    df = df.drop(columns=COLUMNS_TO_DROP, errors="ignore")
-
-    logger.info("Pre-split preprocessing complete.")
+    df = df[df["type"].isin(SCORED_TRANSACTION_TYPES)].copy()
+    df = add_engineered_features(df)
+    logger.info(
+        "Pre-split preprocessing complete: %d rows in scope %s.",
+        len(df),
+        SCORED_TRANSACTION_TYPES,
+    )
     return df
 
 
@@ -96,13 +102,45 @@ def split_features_target(
     return X, y
 
 
+def split_by_time(
+    X: pd.DataFrame,
+    y: pd.Series,
+    cutoff: int = TRAIN_STEP_CUTOFF,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Chronological split: rows with step <= cutoff train, later rows test.
+
+    A random split lets the model train on transactions from after the ones
+    it is tested on, overstating performance for a system that only ever
+    scores the future. Raises if either side has no fraud, since metrics on
+    a side with a single class are meaningless.
+    """
+    train_mask = X[TIME_COLUMN] <= cutoff
+    X_train, X_test = X[train_mask], X[~train_mask]
+    y_train, y_test = y[train_mask], y[~train_mask]
+
+    if len(X_train) == 0 or len(X_test) == 0:
+        raise ValueError(
+            f"Time split at step<={cutoff} left an empty side "
+            f"(train={len(X_train)}, test={len(X_test)})."
+        )
+    for name, target in (("train", y_train), ("test", y_test)):
+        if target.nunique() < 2:
+            raise ValueError(
+                f"The {name} side of the time split (cutoff step {cutoff}) has "
+                "only one class; adjust TRAIN_STEP_CUTOFF or check the data."
+            )
+
+    X_train = X_train.drop(columns=COLUMNS_TO_DROP, errors="ignore")
+    X_test = X_test.drop(columns=COLUMNS_TO_DROP, errors="ignore")
+    return X_train, X_test, y_train, y_test
+
+
 def build_preprocessor() -> ColumnTransformer:
     """
     Build the sklearn ColumnTransformer.
 
-    Numeric columns get median imputation (robust to outliers, unlike the
-    mean) followed by StandardScaler, since distance-based models need
-    zero-mean, unit-variance input.
+    Numeric columns get median imputation followed by StandardScaler.
 
     Categorical columns get most-frequent imputation, then a
     OneHotEncoder with handle_unknown="ignore". That flag isn't optional:
@@ -110,16 +148,11 @@ def build_preprocessor() -> ColumnTransformer:
     never saw, and without it the pipeline just raises a ValueError and
     your API returns a 500.
 
-    Both SimpleImputer steps are defense-in-depth, not the primary way
-    nulls get handled. Validation (src/validation/imputation.py) already
-    fills every column with an evidence-backed, per-column MCAR policy
-    before this file's input even gets written, so in normal operation
-    these imputers see zero nulls and do nothing. They stay because this
-    file reads that validated file directly without rerunning Validation's
-    checks, and they're the only thing standing between this pipeline and
-    a stale file, a hand-edited one, or a new feature column that shows up
-    without a matching ImputationSpec. See docs/ENGINEERING_LOG.md, Entry
-    8, for the full reasoning.
+    Both SimpleImputer steps are defense-in-depth only: validation
+    already rejects any null (PaySim has none), so in normal operation these
+    see zero nulls and do nothing. They stay because this stage reads the
+    validated file directly and a stale or hand-edited file would otherwise
+    reach the model with NaNs.
 
     remainder="drop" is written out explicitly: columns not listed here
     are meant to be excluded, not forgotten.
@@ -178,7 +211,8 @@ def save_artifacts(
         "categorical_features": CATEGORICAL_FEATURES,
         "n_features_out": len(feature_names),
         "random_seed": RANDOM_SEED,
-        "test_size": TEST_SIZE,
+        "train_step_cutoff": TRAIN_STEP_CUTOFF,
+        "scored_transaction_types": SCORED_TRANSACTION_TYPES,
     }
     with open(FEATURE_METADATA_PATH, "w") as f:
         json.dump(metadata, f, indent=2)
@@ -223,12 +257,14 @@ def run_feature_pipeline() -> None:
     # 3. Split features from target
     X, y = split_features_target(df)
 
-    # 4. Train/test split — MUST happen before any fit() call
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=y
-    )
+    # 4. Chronological train/test split -- MUST happen before any fit() call
+    X_train, X_test, y_train, y_test = split_by_time(X, y)
     logger.info(
-        "Split complete — Train: %d rows | Test: %d rows", len(X_train), len(X_test)
+        "Split complete (step<=%d trains) — Train: %d rows (%d fraud) | "
+        "Test: %d rows (%d fraud)",
+        TRAIN_STEP_CUTOFF,
+        len(X_train), int(y_train.sum()),
+        len(X_test), int(y_test.sum()),
     )
 
     # 5. Build and fit preprocessor on TRAINING DATA ONLY

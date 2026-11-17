@@ -1,209 +1,156 @@
 """
-Tests for the feature engineering pipeline.
-
-Test strategy:
-- Unit tests for each discrete function
-- Integration test for the full pipeline execution
-- Leakage detection: verify preprocessor is fit on train only
-- Schema tests: verify output shape and column names are consistent
-
+Tests for the feature stage: scoping, engineered features, the chronological
+split, and the preprocessor.
 """
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.build_features import (
-    build_preprocessor,
-    get_feature_names,
-    preprocess_raw_columns,
-    run_feature_pipeline,
-    split_features_target,
-)
+import src.features.build_features as bf
 from src.config.feature_config import (
     CATEGORICAL_FEATURES,
+    COLUMNS_TO_DROP,
     NUMERIC_FEATURES,
+    SCORED_TRANSACTION_TYPES,
     TARGET_COLUMN,
+    TRAIN_STEP_CUTOFF,
 )
-from src.validation.imputation import IMPUTATION_SPECS
+from src.features.engineering import add_engineered_features
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def minimal_fraud_df() -> pd.DataFrame:
-    """
-    Minimal synthetic fraud DataFrame, shaped like the output of the
-    validation stage: the 13 raw fraud columns plus every *_was_missing
-    indicator added during validation-stage imputation (see
-    src/validation/imputation.py and IMPUTATION_SPECS for the full list).
-    """
-    n = 50
-    rng = np.random.default_rng(seed=42)
-
-    df = pd.DataFrame({
-        "transaction_amount":   rng.uniform(1, 300, size=n),
-        "hour_of_day":          rng.choice([1.0, 2.0, 3.0], size=n),
-        "is_weekend":           rng.choice([0.0, 1.0], size=n),
-        "num_items":            rng.integers(0, 14, size=n).astype(float),
-        "customer_age":         rng.integers(18, 80, size=n).astype(float),
-        "prev_transactions":    rng.integers(0, 40, size=n).astype(float),
-        "distance_from_home":   rng.uniform(0, 225, size=n),
-        "device_type":          rng.choice([0.0, 1.0, 2.0], size=n),
-        "network_quality":      rng.uniform(0, 100, size=n),
-        "is_first_transaction": rng.choice([0.0, 1.0], size=n),
-        "store_type":           rng.choice([0.0, 1.0], size=n),
-        "velocity_score":       rng.normal(5, 2, size=n),
-        "is_fraud":             rng.choice([0, 1], size=n),
-    })
-    for spec in IMPUTATION_SPECS.values():
-        df[spec.indicator_column] = rng.choice([0, 1], size=n)
-    return df
+def test_engineered_features_are_zero_for_consistent_balances():
+    df = pd.DataFrame(
+        {
+            "amount": [100.0],
+            "oldbalanceOrg": [500.0],
+            "newbalanceOrig": [400.0],
+            "oldbalanceDest": [50.0],
+            "newbalanceDest": [150.0],
+        }
+    )
+    out = add_engineered_features(df)
+    assert out.loc[0, "errorBalanceOrig"] == 0
+    assert out.loc[0, "errorBalanceDest"] == 0
 
 
-@pytest.fixture
-def preprocessed_df(minimal_fraud_df) -> pd.DataFrame:
-    """Return the dataset after pre-split processing."""
-    return preprocess_raw_columns(minimal_fraud_df)
+def test_engineered_features_flag_a_drained_origin_and_unchanged_destination():
+    df = pd.DataFrame(
+        {
+            "amount": [500.0],
+            "oldbalanceOrg": [500.0],
+            "newbalanceOrig": [0.0],  # drained, but consistent with amount
+            "oldbalanceDest": [50.0],
+            "newbalanceDest": [50.0],  # destination never credited
+        }
+    )
+    out = add_engineered_features(df)
+    assert out.loc[0, "errorBalanceOrig"] == 0
+    assert out.loc[0, "errorBalanceDest"] == 500.0
 
 
-# ---------------------------------------------------------------------------
-# Unit tests: preprocess_raw_columns
-# ---------------------------------------------------------------------------
-
-class TestPreprocessRawColumns:
-
-    def test_drops_missingness_indicator_columns(self, minimal_fraud_df):
-        result = preprocess_raw_columns(minimal_fraud_df)
-        for spec in IMPUTATION_SPECS.values():
-            assert spec.indicator_column not in result.columns
-
-    def test_target_remains_binary(self, minimal_fraud_df):
-        result = preprocess_raw_columns(minimal_fraud_df)
-        assert set(result[TARGET_COLUMN].unique()).issubset({0, 1})
-
-    def test_input_is_not_mutated(self, minimal_fraud_df):
-        original_target = minimal_fraud_df[TARGET_COLUMN].copy()
-        preprocess_raw_columns(minimal_fraud_df)
-        pd.testing.assert_series_equal(minimal_fraud_df[TARGET_COLUMN], original_target)
+def test_engineered_features_do_not_mutate_input():
+    df = pd.DataFrame(
+        {c: [1.0] for c in
+         ["amount", "oldbalanceOrg", "newbalanceOrig", "oldbalanceDest", "newbalanceDest"]}
+    )
+    add_engineered_features(df)
+    assert "errorBalanceOrig" not in df.columns
 
 
-# ---------------------------------------------------------------------------
-# Unit tests: build_preprocessor
-# ---------------------------------------------------------------------------
-
-class TestBuildPreprocessor:
-
-    def test_preprocessor_fits_without_error(self, preprocessed_df):
-        X, _ = split_features_target(preprocessed_df)
-        preprocessor = build_preprocessor()
-        preprocessor.fit(X)  # should not raise
-
-    def test_transform_produces_no_nans(self, preprocessed_df):
-        X, _ = split_features_target(preprocessed_df)
-        preprocessor = build_preprocessor()
-        preprocessor.fit(X)
-        X_transformed = preprocessor.transform(X)
-        assert not np.isnan(X_transformed).any(), "Transformed data contains NaN"
-
-    def test_handles_unseen_categories_without_crash(self, preprocessed_df):
-        """
-        Critical deployment safety test.
-        Verifies handle_unknown='ignore' prevents crashes on novel category values
-        that the training set never saw — a guaranteed real-world scenario.
-        """
-        X, _ = split_features_target(preprocessed_df)
-        preprocessor = build_preprocessor()
-        preprocessor.fit(X)
-
-        X_unseen = X.copy()
-        X_unseen["device_type"] = 5.0
-
-        try:
-            preprocessor.transform(X_unseen)
-        except ValueError as e:
-            pytest.fail(
-                f"Preprocessor crashed on unseen category — inference would fail: {e}"
-            )
+def test_preprocess_scopes_to_scored_types_and_adds_features(paysim_df):
+    out = bf.preprocess_raw_columns(paysim_df)
+    assert set(out["type"]) <= set(SCORED_TRANSACTION_TYPES)
+    assert {"errorBalanceOrig", "errorBalanceDest"} <= set(out.columns)
+    # step is still present: the split needs it
+    assert "step" in out.columns
 
 
-# ---------------------------------------------------------------------------
-# Leakage detection test
-# ---------------------------------------------------------------------------
-
-class TestDataLeakagePrevention:
-
-    def test_scaler_statistics_differ_train_vs_full(self, preprocessed_df):
-        """
-        Verifies the preprocessor is fit on train data only.
-
-        If fit() were called on the full dataset, the scaler's mean_
-        would match the full-dataset mean exactly. We test that it does not.
-        This is a property-based signal, not a guarantee — but it catches
-        the most common leakage mistake.
-        """
-        from sklearn.model_selection import train_test_split
-        from src.config.feature_config import RANDOM_SEED, TEST_SIZE
-
-        X, _ = split_features_target(preprocessed_df)
-        X_train, _ = train_test_split(X, test_size=TEST_SIZE, random_state=RANDOM_SEED)
-
-        # Fit on train only
-        preprocessor_train = build_preprocessor()
-        preprocessor_train.fit(X_train)
-
-        # Fit on full dataset (the leaky way)
-        preprocessor_full = build_preprocessor()
-        preprocessor_full.fit(X)
-
-        train_mean = preprocessor_train.named_transformers_["numeric"]["scaler"].mean_
-        full_mean  = preprocessor_full.named_transformers_["numeric"]["scaler"].mean_
-
-        assert not np.allclose(train_mean, full_mean), (
-            "Scaler means are identical for train-only vs full-dataset fit. "
-            "This may indicate data leakage."
-        )
+def test_all_fraud_in_dataset_is_in_scored_types(paysim_df):
+    """Guards the scoping assumption: filtering must not discard fraud."""
+    fraud_types = set(paysim_df.loc[paysim_df["isFraud"] == 1, "type"])
+    assert fraud_types <= set(SCORED_TRANSACTION_TYPES)
 
 
-# ---------------------------------------------------------------------------
-# Integration test
-# ---------------------------------------------------------------------------
+def _split(df):
+    X, y = bf.split_features_target(bf.preprocess_raw_columns(df))
+    return X, y, *bf.split_by_time(X, y)
 
-class TestRunFeaturePipeline:
 
-    def test_pipeline_produces_all_output_files(self, tmp_path, minimal_fraud_df, monkeypatch):
-        """
-        Full pipeline integration test using tmp_path to avoid touching real artifact dirs.
-        """
-        import src.config.paths as paths
-        import src.features.build_features as bf
+def test_time_split_is_strictly_chronological(paysim_df):
+    X, _, X_train, X_test, y_train, y_test = _split(paysim_df)
+    steps = paysim_df.loc[X.index, "step"]
+    assert steps.loc[X_train.index].max() <= TRAIN_STEP_CUTOFF
+    assert steps.loc[X_test.index].min() > TRAIN_STEP_CUTOFF
+    assert set(X_train.index).isdisjoint(X_test.index)
+    assert len(X_train) + len(X_test) == len(X)
+    assert len(y_train) == len(X_train) and len(y_test) == len(X_test)
 
-        # Point all paths to tmp_path
-        validated_csv = tmp_path / "fraud_validated.csv"
-        minimal_fraud_df.to_csv(validated_csv, index=False)
 
-        monkeypatch.setattr(paths, "VALIDATED_DATASET_PATH", validated_csv)
-        monkeypatch.setattr(paths, "PROCESSED_DATA_DIR", tmp_path / "processed")
-        monkeypatch.setattr(paths, "FEATURES_ARTIFACTS_DIR", tmp_path / "artifacts")
-        monkeypatch.setattr(paths, "PREPROCESSOR_PATH", tmp_path / "artifacts" / "preprocessor.joblib")
-        monkeypatch.setattr(paths, "FEATURE_METADATA_PATH", tmp_path / "artifacts" / "feature_metadata.json")
-        monkeypatch.setattr(paths, "TRAIN_FEATURES_PATH", tmp_path / "processed" / "X_train.csv")
-        monkeypatch.setattr(paths, "TEST_FEATURES_PATH", tmp_path / "processed" / "X_test.csv")
-        monkeypatch.setattr(paths, "TRAIN_TARGET_PATH", tmp_path / "processed" / "y_train.csv")
-        monkeypatch.setattr(paths, "TEST_TARGET_PATH", tmp_path / "processed" / "y_test.csv")
+def test_time_split_drops_non_feature_columns(paysim_df):
+    _, _, X_train, X_test, _, _ = _split(paysim_df)
+    for frame in (X_train, X_test):
+        assert not set(COLUMNS_TO_DROP) & set(frame.columns)
+        assert TARGET_COLUMN not in frame.columns
+        assert set(frame.columns) == set(NUMERIC_FEATURES) | set(CATEGORICAL_FEATURES)
 
-        # Re-import to pick up monkeypatched paths
-        import importlib
-        importlib.reload(bf)
 
-        bf.run_feature_pipeline()
+def test_time_split_raises_when_a_side_has_no_fraud(paysim_df):
+    X, y = bf.split_features_target(bf.preprocess_raw_columns(paysim_df))
+    y = y.copy()
+    y[X["step"] > TRAIN_STEP_CUTOFF] = 0
+    with pytest.raises(ValueError, match="only one class"):
+        bf.split_by_time(X, y)
 
-        assert (tmp_path / "artifacts" / "preprocessor.joblib").exists()
-        assert (tmp_path / "artifacts" / "feature_metadata.json").exists()
-        assert (tmp_path / "processed" / "X_train.csv").exists()
-        assert (tmp_path / "processed" / "X_test.csv").exists()
+
+def test_time_split_raises_on_empty_side(paysim_df):
+    X, y = bf.split_features_target(bf.preprocess_raw_columns(paysim_df))
+    with pytest.raises(ValueError, match="empty side"):
+        bf.split_by_time(X, y, cutoff=10_000)
+
+
+def test_preprocessor_fits_on_train_only_and_handles_unseen_category(paysim_df):
+    _, _, X_train, X_test, _, _ = _split(paysim_df)
+    pre = bf.build_preprocessor().fit(X_train)
+
+    out = pre.transform(X_test)
+    names = bf.get_feature_names(pre)
+    assert out.shape == (len(X_test), len(names))
+    assert not np.isnan(out).any()
+
+    # fitted on training statistics, not test: train means ~0, test need not be
+    train_out = pre.transform(X_train)
+    assert abs(train_out[:, 0].mean()) < 1e-9
+
+    unseen = X_test.head(1).copy()
+    unseen["type"] = "NEW_TYPE"
+    assert not np.isnan(pre.transform(unseen)).any()  # handle_unknown="ignore"
+
+
+def test_full_feature_pipeline_writes_artifacts(paysim_df, tmp_path, monkeypatch):
+    paths = {
+        "VALIDATED_DATASET_PATH": tmp_path / "validated.csv",
+        "FEATURES_ARTIFACTS_DIR": tmp_path / "features",
+        "PREPROCESSOR_PATH": tmp_path / "features" / "preprocessor.joblib",
+        "FEATURE_METADATA_PATH": tmp_path / "features" / "feature_metadata.json",
+        "PROCESSED_DATA_DIR": tmp_path / "processed",
+        "TRAIN_FEATURES_PATH": tmp_path / "processed" / "X_train.csv",
+        "TEST_FEATURES_PATH": tmp_path / "processed" / "X_test.csv",
+        "TRAIN_TARGET_PATH": tmp_path / "processed" / "y_train.csv",
+        "TEST_TARGET_PATH": tmp_path / "processed" / "y_test.csv",
+    }
+    for name, value in paths.items():
+        monkeypatch.setattr(bf, name, value)
+    paysim_df.to_csv(paths["VALIDATED_DATASET_PATH"], index=False)
+
+    bf.run_feature_pipeline()
+
+    assert paths["PREPROCESSOR_PATH"].exists()
+    metadata = json.loads(paths["FEATURE_METADATA_PATH"].read_text())
+    assert metadata["train_step_cutoff"] == TRAIN_STEP_CUTOFF
+    X_train = pd.read_csv(paths["TRAIN_FEATURES_PATH"])
+    y_train = pd.read_csv(paths["TRAIN_TARGET_PATH"])
+    assert len(X_train) == len(y_train)
+    assert X_train.shape[1] == metadata["n_features_out"]

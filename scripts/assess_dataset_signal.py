@@ -39,7 +39,7 @@ from sklearn.impute import SimpleImputer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.paths import RAW_DATASET_PATH  # noqa: E402
+from src.config.paths import LEGACY_RAW_DATASET_PATH  # noqa: E402
 
 TARGET_COLUMN = "is_fraud"
 
@@ -164,7 +164,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    df = pd.read_csv(RAW_DATASET_PATH)
+    df = pd.read_csv(LEGACY_RAW_DATASET_PATH)
     assessment = run_assessment(df)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
