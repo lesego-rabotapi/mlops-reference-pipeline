@@ -858,6 +858,29 @@ this endpoint. Ran the full suite after the change: 81/81.
 
 ---
 
+## Entry 16: Trivy re-failed on newly published CVEs; bumped 12 pins
+
+**Observation.** CI run 43871306488 (Nov 16) failed at the Trivy step only:
+50 fixable HIGH/CRITICAL findings (42 HIGH, 8 CRITICAL) against pinned
+packages, with no code change since the Sep 4 green runs. New CVEs were
+published against existing pins in the interim.
+
+**Decision.** Bumped to the fixed versions Trivy reported: `mlflow`,
+`mlflow-skinny`, `mlflow-tracing` 3.17.0; `pillow` 13.0.0; `anyio` 4.14.2;
+`GitPython` 3.2.1; `urllib3` 2.8.0; `pyasn1` 0.6.5; `certifi` 2026.10.18;
+`aiohttp` 3.14.4; `graphql-core` 3.2.12. `aiohttp` 3.14.4 requires
+`yarl>=1.25.1`, so `yarl` moved to 1.25.1 as well.
+
+**Tradeoffs.** Verified locally with `pip check`, the full suite (81/81)
+and a real `validate -> features -> train` run (`roc_auc=0.5083`, unchanged).
+Trivy itself was confirmed by the CI run on the push, not locally.
+
+**Lessons learned.**
+- A green scan is a point-in-time result; pinned dependencies with
+  `exit-code: 1` will go red as advisories land, with no code change.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **`1/minute` on `/predict` is unvalidated against real traffic.**
