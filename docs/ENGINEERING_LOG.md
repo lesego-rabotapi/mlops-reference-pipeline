@@ -881,9 +881,58 @@ Trivy itself was confirmed by the CI run on the push, not locally.
 
 ---
 
+## Entry 17: Moving the pipeline to PaySim (reversing Entry 9)
+
+**Observation.** Entry 9 chose to stay on Dataset v1 and frame the project
+as a pipeline that correctly refuses an unlearnable dataset. That left the
+repo unable to demonstrate a working model (roc_auc 0.508 on every run).
+PaySim has real, learnable structure (fraud only in TRANSFER/CASH_OUT;
+balance inconsistencies), so the decision was reversed.
+
+**Decision.** Migrated validation, features, training, serving, tests and
+docs to PaySim on branch `paysim-dataset`:
+- Validation: new schema/value-domain rules; imputation and missingness
+  machinery deleted (PaySim has no nulls; any null now halts).
+- Scope: model scored on TRANSFER and CASH_OUT only (all fraud lives
+  there). Serving rejects other types with a 422.
+- Features: `errorBalanceOrig` / `errorBalanceDest`, defined once in
+  `src/features/engineering.py` and used by both the feature stage and
+  `/predict` to prevent training-serving skew. `nameOrig`, `nameDest`,
+  `isFlaggedFraud` (simulator rule output, a label leak) and `step` are not
+  model inputs.
+- Split: chronological on `step` (train <= 600), replacing the random
+  stratified split.
+- Model: HistGradientBoosting with `class_weight="balanced"` instead of a
+  100-tree RandomForest, for speed at ~2M training rows. Added
+  `recall_at_1pct_alerts`, a threshold-free operational metric.
+- CI runs the pipeline on a synthetic PaySim-shaped smoke dataset
+  (`scripts/make_smoke_dataset.py`) since the real file is ~470MB.
+
+**Tradeoffs.** The suite (43 tests, down from 81) shrank because the
+imputation and missingness tests went with the code they covered. **The
+pipeline has not been run against real PaySim**: smoke-data metrics are
+~1.0 by construction and prove only the plumbing. Timing/memory of
+validation (duplicate check, Great Expectations) on 6.36M rows is
+unmeasured. The `/predict` schema changed, so existing client payloads and
+any recorded demo break. `DECISION_THRESHOLD=0.5` is untuned.
+
+**Lessons learned.**
+- Reversing a documented decision is fine when the log says why; Entry 9
+  stays as written rather than being edited.
+- A synthetic stand-in dataset must be labelled everywhere it appears, or
+  its near-perfect metrics will be mistaken for results.
+
+---
+
 ## Open items (tracked here, not yet actioned)
 
 - **`1/minute` on `/predict` is unvalidated against real traffic.**
   Picked as a conservative demo/test value, not measured against any
   actual usage pattern -- revisit if this project ever serves real
   traffic.
+- **Run the pipeline on real PaySim** and record the actual pr_auc and
+  recall_at_1pct_alerts, plus validation runtime/memory at 6.36M rows.
+- **Choose a decision threshold** from an explicit cost assumption instead
+  of the untuned 0.5.
+- **Refresh portfolio evidence** (Swagger, Grafana, demo payload) -- the
+  `/predict` request schema changed with this migration.

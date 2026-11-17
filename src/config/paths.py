@@ -26,8 +26,13 @@ FEATURES_ARTIFACTS_DIR   = PROJECT_ROOT / "artifacts" / "features"
 TRAINING_ARTIFACTS_DIR   = PROJECT_ROOT / "artifacts" / "training"
 
 # Specific files
-RAW_DATASET_PATH         = RAW_DATA_DIR / "fraud_raw.csv"
-VALIDATED_DATASET_PATH   = VALIDATED_DATA_DIR / "fraud_validated.csv"
+# Active dataset: PaySim (see docs/DATASET_ASSESSMENT.md). Gitignored -- it
+# is ~470MB; download it yourself (docs/BUILD.md) or generate the synthetic
+# smoke dataset with scripts/make_smoke_dataset.py.
+RAW_DATASET_PATH         = RAW_DATA_DIR / "paysim_raw.csv"
+# Rejected Dataset v1, kept in git as evidence of the data-quality gate.
+LEGACY_RAW_DATASET_PATH  = RAW_DATA_DIR / "fraud_raw.csv"
+VALIDATED_DATASET_PATH   = VALIDATED_DATA_DIR / "paysim_validated.csv"
 PREPROCESSOR_PATH        = FEATURES_ARTIFACTS_DIR / "preprocessor.joblib"
 FEATURE_METADATA_PATH    = FEATURES_ARTIFACTS_DIR / "feature_metadata.json"
 

@@ -12,7 +12,6 @@ from src.config.paths import (
     VALIDATED_DATASET_PATH,
     VALIDATION_ARTIFACTS_DIR,
 )
-from src.validation.imputation import run_imputation
 from src.validation.rules import VALIDATION_RULES
 
 
@@ -131,7 +130,7 @@ def run_core_validation(df: pd.DataFrame) -> list[ValidationResult]:
 
 def build_great_expectations_suite(gx):
     """
-    Build the ExpectationSuite of governance checks for fraud.csv.
+    Build the ExpectationSuite of governance checks for the PaySim dataset.
 
     This mirrors the core rules in src/validation/rules.py, it doesn't
     replace them. GX is a second, industry-standard evidence trail, so
@@ -139,32 +138,28 @@ def build_great_expectations_suite(gx):
     not new rules.
     """
     suite = gx.ExpectationSuite(name="fraud_validation_suite")
-    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="is_fraud"))
+    suite.add_expectation(gx.expectations.ExpectColumnToExist(column="isFraud"))
     suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToNotBeNull(column="is_fraud")
+        gx.expectations.ExpectColumnValuesToNotBeNull(column="isFraud")
     )
     suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeBetween(
-            column="customer_age", min_value=0, max_value=120, mostly=1.0
-        )
-    )
-    suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeBetween(
-            column="network_quality", min_value=0, max_value=100, mostly=1.0
-        )
+        gx.expectations.ExpectColumnValuesToBeInSet(column="isFraud", value_set=[0, 1])
     )
     suite.add_expectation(
         gx.expectations.ExpectColumnValuesToBeInSet(
-            column="device_type", value_set=[0.0, 1.0, 2.0], mostly=1.0
+            column="type",
+            value_set=["CASH_IN", "CASH_OUT", "DEBIT", "PAYMENT", "TRANSFER"],
         )
     )
     suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeInSet(
-            column="store_type", value_set=[0.0, 1.0], mostly=1.0
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="amount", min_value=0, mostly=1.0
         )
     )
     suite.add_expectation(
-        gx.expectations.ExpectColumnValuesToBeInSet(column="is_fraud", value_set=[0, 1])
+        gx.expectations.ExpectColumnValuesToBeBetween(
+            column="step", min_value=1, mostly=1.0
+        )
     )
     return suite
 
@@ -284,12 +279,8 @@ def run_validation(
 
     Reports are always saved. The validated dataset only gets written once
     every check passes, which keeps stale or invalid data from becoming
-    trusted input. Every column with an approved imputation policy (see
-    IMPUTATION_SPECS in src/validation/imputation.py, and
-    docs/MISSINGNESS_ANALYSIS.md for the MCAR evidence behind each one)
-    only gets imputed after every check has passed, including its own
-    missing-rate ceiling guard. is_fraud, the target, is never imputed --
-    it's required non-null through the target_not_null rule instead.
+    trusted input. PaySim has no missing values, so nothing is imputed:
+    any null fails the no_missing_values rule and halts the stage.
     """
     logger.info("=== Data Validation START ===")
     df = load_dataset(input_path)
@@ -310,7 +301,6 @@ def run_validation(
                 logger.error("%s: %s", result.rule_name, error)
         return report
 
-    df = run_imputation(df)
     save_validated_dataset(df, validated_output_path)
     logger.info("=== Data Validation COMPLETE ===")
     return report

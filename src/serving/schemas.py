@@ -1,22 +1,26 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class PredictionRequest(BaseModel):
-    # Numeric features (src/config/feature_config.py: NUMERIC_FEATURES)
-    transaction_amount: float = Field(..., ge=0)
-    num_items: float = Field(..., ge=0)
-    customer_age: float = Field(..., ge=0, le=120)
-    prev_transactions: float = Field(..., ge=0)
-    distance_from_home: float = Field(..., ge=0)
-    network_quality: float = Field(..., ge=0, le=100)
-    velocity_score: float
+    """
+    One PaySim-style transaction. Raw fields only: the balance-error
+    features are computed server-side by src/features/engineering.py, the
+    same function training uses, so callers cannot send inconsistent values.
 
-    # Categorical features (src/config/feature_config.py: CATEGORICAL_FEATURES)
-    hour_of_day: float
-    is_weekend: float
-    device_type: float
-    is_first_transaction: float
-    store_type: float
+    `type` is restricted to the transaction types the model was trained and
+    evaluated on (feature_config.SCORED_TRANSACTION_TYPES). PaySim has no
+    fraud in the other types, so scoring them would be out-of-scope
+    extrapolation; they get a 422 instead of a meaningless score.
+    """
+
+    type: Literal["TRANSFER", "CASH_OUT"]
+    amount: float = Field(..., ge=0)
+    oldbalanceOrg: float = Field(..., ge=0)
+    newbalanceOrig: float = Field(..., ge=0)
+    oldbalanceDest: float = Field(..., ge=0)
+    newbalanceDest: float = Field(..., ge=0)
 
 
 class PredictionResponse(BaseModel):

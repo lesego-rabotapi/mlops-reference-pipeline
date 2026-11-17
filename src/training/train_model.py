@@ -17,9 +17,10 @@ from pathlib import Path
 
 import joblib
 import mlflow
+import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -29,7 +30,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.config.feature_config import RANDOM_SEED
+from src.config.feature_config import (
+    CATEGORICAL_FEATURES,
+    NUMERIC_FEATURES,
+    RANDOM_SEED,
+)
 from src.config.paths import (
     EVALUATION_REPORT_PATH,
     MANIFEST_PATH,
@@ -42,7 +47,12 @@ from src.config.paths import (
     TRAIN_TARGET_PATH,
     TRAINING_ARTIFACTS_DIR,
 )
-from src.config.training_config import MLFLOW_EXPERIMENT_NAME, RANDOM_FOREST_PARAMS
+from src.config.training_config import (
+    ALERT_BUDGET_FRACTION,
+    DECISION_THRESHOLD,
+    MLFLOW_EXPERIMENT_NAME,
+    MODEL_PARAMS,
+)
 
 
 logging.basicConfig(
@@ -51,7 +61,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-METRIC_NAMES = ("accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc")
+METRIC_NAMES = (
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "roc_auc",
+    "pr_auc",
+    "recall_at_1pct_alerts",
+)
 
 
 def assert_required_artifacts(paths: tuple[Path, ...]) -> None:
@@ -113,13 +131,28 @@ def load_training_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Seri
     return X_train, X_test, y_train, y_test
 
 
-def build_model() -> RandomForestClassifier:
-    """Create the deterministic baseline classifier from explicit configuration."""
-    return RandomForestClassifier(**RANDOM_FOREST_PARAMS)
+def build_model() -> HistGradientBoostingClassifier:
+    """Create the deterministic classifier from explicit configuration."""
+    return HistGradientBoostingClassifier(**MODEL_PARAMS)
+
+
+def recall_at_alert_budget(
+    y_true: pd.Series, scores: np.ndarray, fraction: float = ALERT_BUDGET_FRACTION
+) -> float:
+    """
+    Share of all fraud caught if analysts review only the top `fraction`
+    highest-scored transactions. Threshold-free, and the operationally
+    meaningful number for fraud: review capacity is fixed, not the score cutoff.
+    """
+    y = np.asarray(y_true)
+    n_alerts = max(1, int(np.ceil(len(y) * fraction)))
+    top = np.argsort(-np.asarray(scores), kind="stable")[:n_alerts]
+    total_fraud = y.sum()
+    return float(y[top].sum() / total_fraud) if total_fraud else 0.0
 
 
 def evaluate_model(
-    model: RandomForestClassifier,
+    model: HistGradientBoostingClassifier,
     X_test: pd.DataFrame,
     y_test: pd.Series,
 ) -> dict[str, float]:
@@ -138,12 +171,15 @@ def evaluate_model(
     class imbalance, propped up by all the easy true negatives. pr_auc
     (average precision) is the usual companion metric for imbalanced
     problems and should carry more weight when comparing models.
+    recall_at_1pct_alerts is the operational one: the share of all fraud
+    caught if only the top 1% highest-scored transactions get reviewed.
+    The hard 0/1 predictions use DECISION_THRESHOLD, which is not tuned.
     """
     if y_test.nunique() < 2:
         raise ValueError("ROC-AUC requires both fraud classes in the test target.")
 
-    predictions = model.predict(X_test)
     probabilities = model.predict_proba(X_test)[:, 1]
+    predictions = (probabilities >= DECISION_THRESHOLD).astype(int)
     metrics = {
         "accuracy": float(accuracy_score(y_test, predictions)),
         "precision": float(
@@ -157,16 +193,18 @@ def evaluate_model(
         ),
         "roc_auc": float(roc_auc_score(y_test, probabilities)),
         "pr_auc": float(average_precision_score(y_test, probabilities)),
+        "recall_at_1pct_alerts": recall_at_alert_budget(y_test, probabilities),
     }
     logger.info(
         "Evaluation complete: precision=%.4f recall=%.4f f1=%.4f pr_auc=%.4f "
-        "roc_auc=%.4f accuracy=%.4f",
+        "roc_auc=%.4f accuracy=%.4f recall@1%%alerts=%.4f",
         metrics["precision"],
         metrics["recall"],
         metrics["f1"],
         metrics["pr_auc"],
         metrics["roc_auc"],
         metrics["accuracy"],
+        metrics["recall_at_1pct_alerts"],
     )
     return metrics
 
@@ -192,6 +230,10 @@ def save_manifest() -> None:
     manifest = {
         "model_hash": sha256_file(MODEL_PATH),
         "preprocessor_hash": sha256_file(PREPROCESSOR_PATH),
+        # Raw model-input columns the serving layer must supply. Lets
+        # serving refuse artifacts built for a different schema instead
+        # of loading them and failing every request.
+        "input_columns": NUMERIC_FEATURES + CATEGORICAL_FEATURES,
         "sklearn_version": sklearn.__version__,
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -229,7 +271,7 @@ def run_training() -> dict[str, float]:
     with mlflow.start_run():
         model = build_model()
         model.fit(X_train, y_train)
-        logger.info("RandomForestClassifier fitted with random_state=%d", RANDOM_SEED)
+        logger.info("Model fitted with random_state=%d", RANDOM_SEED)
 
         metrics = evaluate_model(model, X_test, y_test)
         joblib.dump(model, MODEL_PATH)

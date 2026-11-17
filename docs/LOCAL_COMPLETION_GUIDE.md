@@ -35,7 +35,7 @@ Evidence:
 
 - Validation tests pass
 - Validation report JSON exists
-- `data/validated/fraud_validated.csv` exists after a successful run
+- `data/validated/paysim_validated.csv` exists after a successful run
 
 ### 3. Feature Engineering
 

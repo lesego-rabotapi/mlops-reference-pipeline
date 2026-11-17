@@ -3,7 +3,6 @@ import json
 import numpy as np
 import pandas as pd
 
-from src.validation.imputation import IMPUTATION_SPECS
 from src.validation.validate_data import (
     run_core_validation,
     run_great_expectations,
@@ -11,209 +10,107 @@ from src.validation.validate_data import (
 )
 
 
-def make_valid_raw_df(
-    row_count: int = 120, missing_rate_overrides: dict | None = None
-) -> pd.DataFrame:
-    """
-    Create a raw fraud dataset that matches the validation contract.
-
-    row_count=120 divides evenly into the small cycles below (2s and 3s) so
-    every column ends up fully populated with in-range values before
-    missingness is seeded. Every column with an approved imputation policy
-    (IMPUTATION_SPECS) gets nulls seeded at its own validated_missing_rate
-    by default -- pass missing_rate_overrides={"column": rate} to push a
-    specific column's rate for ceiling-guard tests.
-    """
-    overrides = missing_rate_overrides or {}
-    df = pd.DataFrame(
-        {
-            "transaction_amount": np.linspace(10.0, 200.0, row_count),
-            "hour_of_day": ([1.0, 2.0, 3.0] * (row_count // 3))[:row_count],
-            "is_weekend": ([0.0, 1.0] * (row_count // 2))[:row_count],
-            "num_items": [float(i % 10) for i in range(row_count)],
-            "customer_age": np.linspace(18.0, 80.0, row_count),
-            "prev_transactions": [float(i % 20) for i in range(row_count)],
-            "distance_from_home": np.linspace(0.0, 100.0, row_count),
-            "device_type": ([0.0, 1.0, 2.0] * (row_count // 3))[:row_count],
-            "network_quality": np.linspace(1.0, 99.0, row_count),
-            "is_first_transaction": ([0.0, 1.0] * (row_count // 2))[:row_count],
-            "store_type": ([0.0, 1.0] * (row_count // 2))[:row_count],
-            "velocity_score": np.linspace(1.0, 10.0, row_count),
-            "is_fraud": ([0, 1] * (row_count // 2))[:row_count],
-        }
-    )
-
-    for column, spec in IMPUTATION_SPECS.items():
-        rate = overrides.get(column, spec.validated_missing_rate)
-        n_missing = int(row_count * rate)
-        if n_missing > 0:
-            df.loc[: n_missing - 1, column] = np.nan
-
-    return df
+def failed_rules(df: pd.DataFrame) -> dict[str, list[str]]:
+    return {r.rule_name: r.errors for r in run_core_validation(df) if not r.passed}
 
 
-def test_core_validation_passes_for_valid_raw_dataset():
-    df = make_valid_raw_df()
-
-    results = run_core_validation(df)
-
-    assert all(result.passed for result in results)
+def test_core_validation_passes_for_valid_dataset(paysim_df):
+    assert failed_rules(paysim_df) == {}
 
 
-def test_core_validation_fails_cleanly_when_required_column_is_missing():
-    df = make_valid_raw_df().drop(columns=["network_quality"])
-
-    results = run_core_validation(df)
-
-    failed_rules = {result.rule_name for result in results if not result.passed}
-    assert "required_columns" in failed_rules
-
-
-def test_core_validation_fails_on_duplicate_rows():
-    df = make_valid_raw_df()
-    df.loc[1] = df.loc[0]
-
-    results = run_core_validation(df)
-
-    duplicate_result = next(
-        result for result in results if result.rule_name == "no_duplicate_rows"
-    )
-    assert not duplicate_result.passed
-    assert "duplicate row" in duplicate_result.errors[0]
+def test_missing_required_column_fails_schema_and_stops(paysim_df):
+    results = run_core_validation(paysim_df.drop(columns=["amount"]))
+    failed = [r for r in results if not r.passed]
+    assert [r.rule_name for r in failed] == ["required_columns"]
+    assert "amount" in failed[0].errors[0]
+    # schema failure stops the run: no downstream rule results
+    assert len(results) == 3
 
 
-def test_core_validation_fails_when_a_column_missing_rate_exceeds_its_ceiling():
-    for column, spec in IMPUTATION_SPECS.items():
-        df = make_valid_raw_df(
-            missing_rate_overrides={column: min(spec.max_missing_rate + 0.20, 0.95)}
-        )
-
-        results = run_core_validation(df)
-
-        ceiling_result = next(
-            result
-            for result in results
-            if result.rule_name == f"{column}_missing_rate_within_ceiling"
-        )
-        assert not ceiling_result.passed, f"{column} ceiling guard should have failed"
-        assert "exceeds the validated ceiling" in ceiling_result.errors[0]
+def test_unexpected_column_fails(paysim_df):
+    paysim_df["surprise"] = 1
+    assert "no_unexpected_columns" in failed_rules(paysim_df)
 
 
-def test_great_expectations_passes_for_valid_dataset():
-    df = make_valid_raw_df()
-
-    result = run_great_expectations(df)
-
-    assert result.passed
-    assert result.errors == []
+def test_wrong_dtype_fails(paysim_df):
+    paysim_df["isFraud"] = paysim_df["isFraud"].astype(float) + 0.5
+    assert "datatypes" in failed_rules(paysim_df)
 
 
-def test_great_expectations_fails_for_invalid_dataset():
-    df = make_valid_raw_df()
-    df.loc[0, "customer_age"] = 999.0
-
-    result = run_great_expectations(df)
-
-    assert not result.passed
-    assert any("customer_age" in error for error in result.errors)
+def test_any_null_fails_instead_of_being_imputed(paysim_df):
+    paysim_df.loc[3, "amount"] = np.nan
+    assert "no_missing_values" in failed_rules(paysim_df)
 
 
-def test_run_validation_writes_report_and_validated_dataset_on_success(tmp_path):
-    input_path = tmp_path / "raw.csv"
-    output_path = tmp_path / "validated" / "validated.csv"
-    report_dir = tmp_path / "reports"
-    make_valid_raw_df().to_csv(input_path, index=False)
-
-    report = run_validation(
-        input_path=input_path,
-        validated_output_path=output_path,
-        report_output_dir=report_dir,
-        include_great_expectations=False,
-    )
-
-    report_files = list(report_dir.glob("validation_report_*.json"))
-    assert report.passed
-    assert output_path.exists()
-    assert len(report_files) == 1
-
-    with report_files[0].open(encoding="utf-8") as report_file:
-        report_payload = json.load(report_file)
-
-    assert report_payload["passed"] is True
-    assert report_payload["row_count"] == 120
+def test_negative_amount_and_balance_fail(paysim_df):
+    paysim_df.loc[0, "amount"] = -1.0
+    paysim_df.loc[1, "oldbalanceOrg"] = -5.0
+    failed = failed_rules(paysim_df)
+    assert "amount_non_negative" in failed
+    assert "oldbalanceOrg_non_negative" in failed
 
 
-def test_run_validation_passes_with_great_expectations_on_default_path(tmp_path):
-    """
-    Exercises the real default path (include_great_expectations=True, the
-    same default `python -m src.validation.validate_data` -- the Makefile
-    and CI entrypoint -- uses). Every other test in this module passes
-    include_great_expectations=False, which meant the GX integration had no
-    coverage and silently broke until it was run by hand.
-    """
-    input_path = tmp_path / "raw.csv"
-    output_path = tmp_path / "validated" / "validated.csv"
-    report_dir = tmp_path / "reports"
-    make_valid_raw_df().to_csv(input_path, index=False)
-
-    report = run_validation(
-        input_path=input_path,
-        validated_output_path=output_path,
-        report_output_dir=report_dir,
-    )
-
-    assert report.passed
-    assert output_path.exists()
-    gx_result = next(r for r in report.results if r.rule_name == "great_expectations_suite")
-    assert gx_result.passed
+def test_invalid_type_fails(paysim_df):
+    paysim_df.loc[0, "type"] = "REFUND"
+    assert "type_valid" in failed_rules(paysim_df)
 
 
-def test_run_validation_imputes_every_approved_column(tmp_path):
-    """
-    Every column in IMPUTATION_SPECS should come out fully populated with
-    its indicator column present -- proof the full missingness-handling
-    scope (all 12 flagged columns) runs end to end through the actual
-    validation pipeline, not just the standalone imputation functions.
-    """
-    input_path = tmp_path / "raw.csv"
-    output_path = tmp_path / "validated" / "validated.csv"
-    report_dir = tmp_path / "reports"
-
-    make_valid_raw_df().to_csv(input_path, index=False)
-
-    report = run_validation(
-        input_path=input_path,
-        validated_output_path=output_path,
-        report_output_dir=report_dir,
-        include_great_expectations=False,
-    )
-
-    assert report.passed
-    validated_df = pd.read_csv(output_path)
-
-    for column, spec in IMPUTATION_SPECS.items():
-        assert spec.indicator_column in validated_df.columns, column
-        assert not validated_df[column].isna().any(), column
-
-    assert not validated_df["is_fraud"].isna().any()
+def test_invalid_target_value_fails(paysim_df):
+    paysim_df.loc[0, "isFraud"] = 2
+    assert "isFraud_binary" in failed_rules(paysim_df)
 
 
-def test_run_validation_does_not_write_validated_dataset_on_failure(tmp_path):
-    input_path = tmp_path / "raw.csv"
-    output_path = tmp_path / "validated" / "validated.csv"
-    report_dir = tmp_path / "reports"
+def test_single_class_target_fails(paysim_df):
+    paysim_df["isFraud"] = 0
+    assert "both_classes_present" in failed_rules(paysim_df)
 
-    df = make_valid_raw_df()
-    df.loc[0, "customer_age"] = 200.0
-    df.to_csv(input_path, index=False)
 
-    report = run_validation(
-        input_path=input_path,
-        validated_output_path=output_path,
-        report_output_dir=report_dir,
-        include_great_expectations=False,
-    )
+def test_step_below_one_fails(paysim_df):
+    paysim_df.loc[0, "step"] = 0
+    assert "step_positive" in failed_rules(paysim_df)
 
+
+def test_duplicate_rows_fail(paysim_df):
+    dup = pd.concat([paysim_df, paysim_df.iloc[[0]]], ignore_index=True)
+    assert "no_duplicate_rows" in failed_rules(dup)
+
+
+def test_tiny_dataset_fails_minimum_size(paysim_df):
+    assert "minimum_size" in failed_rules(paysim_df.head(10))
+
+
+def test_great_expectations_passes_for_valid_dataset(paysim_df):
+    result = run_great_expectations(paysim_df)
+    assert result.passed, result.errors
+
+
+def test_great_expectations_catches_invalid_type(paysim_df):
+    paysim_df.loc[0, "type"] = "REFUND"
+    assert not run_great_expectations(paysim_df).passed
+
+
+def test_run_validation_writes_validated_data_only_on_success(paysim_df, tmp_path):
+    raw = tmp_path / "raw.csv"
+    out = tmp_path / "validated" / "v.csv"
+    reports = tmp_path / "reports"
+    paysim_df.to_csv(raw, index=False)
+
+    report = run_validation(raw, out, reports)
+    assert report.passed and out.exists()
+    # no imputation: validated file is identical in content to the input
+    pd.testing.assert_frame_equal(pd.read_csv(out), paysim_df)
+    assert len(list(reports.glob("validation_report_*.json"))) == 1
+
+
+def test_run_validation_halts_and_writes_report_on_failure(paysim_df, tmp_path):
+    paysim_df.loc[0, "type"] = "REFUND"
+    raw = tmp_path / "raw.csv"
+    out = tmp_path / "validated" / "v.csv"
+    reports = tmp_path / "reports"
+    paysim_df.to_csv(raw, index=False)
+
+    report = run_validation(raw, out, reports)
     assert not report.passed
-    assert not output_path.exists()
-    assert len(list(report_dir.glob("validation_report_*.json"))) == 1
+    assert not out.exists()
+    saved = json.loads(next(reports.glob("validation_report_*.json")).read_text())
+    assert saved["passed"] is False

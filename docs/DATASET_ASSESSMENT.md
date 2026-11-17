@@ -1,3 +1,7 @@
+> **Superseded by ENGINEERING_LOG Entry 17:** the project has since moved to
+> PaySim. The assessment below, including the "stay on Dataset v1" decision
+> at the time, is preserved as the record of why that changed.
+
 # Dataset Assessment: predictive signal, separate from structural validity
 
 ## Why this document exists

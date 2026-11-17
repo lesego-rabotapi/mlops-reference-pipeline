@@ -58,10 +58,11 @@ Raw Data
 
 Implemented stages:
 
-- Data validation with reusable rule registry and JSON audit reports,
-  including per-column MCAR/MNAR missingness analysis and evidence-backed
-  imputation policies -- see [docs/MISSINGNESS_ANALYSIS.md](docs/MISSINGNESS_ANALYSIS.md)
-- Feature engineering with scikit-learn pipelines and artifact persistence
+- Data validation with reusable rule registry and JSON audit reports
+  (schema, value domains, no-nulls, class presence)
+- Feature engineering with scikit-learn pipelines, balance-consistency
+  features shared between training and serving, a chronological
+  train/test split, and artifact persistence
 - Feature engineering tests including leakage detection
 - Training and evaluation with MLflow tracking, imbalance-aware metrics,
   artifact manifests, and training tests
@@ -75,16 +76,23 @@ Implemented stages:
 - GitHub Actions CI: install, test, build the image, and scan it with
   Trivy
 
-**Current status:** the raw dataset (`fraud_raw.csv`) passes every
-structural validation check but was assessed and rejected for supervised
-learning -- statistical evidence points to `is_fraud` being generated
-independently of the other features (see
-[docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)). A PaySim
-alternative was evaluated and rejected as an unnecessary pivot; the
-project stays on this dataset by decision, not by default, with the
-deliverable framed around a pipeline that correctly identifies its input
-can't support a supervised model, rather than a working classifier. See
-[docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md), Entries 7 and 9.
+**Current status:** the pipeline targets the PaySim dataset
+(`data/raw/paysim_raw.csv`, gitignored, ~470MB -- see
+[docs/BUILD.md](docs/BUILD.md) for where to get it). The original dataset
+(`fraud_raw.csv`, still in the repo) was assessed and rejected because
+`is_fraud` was generated independently of every feature
+([docs/DATASET_ASSESSMENT.md](docs/DATASET_ASSESSMENT.md)); ENGINEERING_LOG
+Entry 17 records the decision to move to PaySim.
+
+**What has and hasn't been verified:** the code, tests, and CI run
+end to end against a *synthetic, PaySim-shaped smoke dataset*
+(`python scripts/make_smoke_dataset.py`). Metrics from that data (near
+perfect, because it is deterministic by construction) prove only that the
+plumbing works. **The pipeline has not yet been run against the real
+PaySim file**, so no real-model performance claim is made anywhere in
+this repo. PaySim is itself simulated, so even good numbers on it would
+show the pipeline can learn real structure, not that it would catch
+real-world fraud.
 
 See [docs/ENGINEERING_LOG.md](docs/ENGINEERING_LOG.md) for the reasoning
 behind these decisions -- not just what was built, but why, what

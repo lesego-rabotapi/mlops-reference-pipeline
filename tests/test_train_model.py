@@ -13,11 +13,11 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import f1_score
 
 import src.training.train_model as training
-from src.config.training_config import RANDOM_FOREST_PARAMS
+from src.config.training_config import MODEL_PARAMS
 
 
 def configure_temporary_paths(tmp_path, monkeypatch) -> dict[str, object]:
@@ -65,14 +65,14 @@ def trained_artifacts(tmp_path, monkeypatch):
             "encoded_feature": [value % 3 for value in range(40)],
         }
     )
-    y_train = pd.DataFrame({"is_fraud": [0, 1] * 20})
+    y_train = pd.DataFrame({"isFraud": [0, 1] * 20})
     X_test = pd.DataFrame(
         {
             "numeric_feature": list(range(40, 60)),
             "encoded_feature": [value % 3 for value in range(40, 60)],
         }
     )
-    y_test = pd.DataFrame({"is_fraud": [0, 1] * 10})
+    y_test = pd.DataFrame({"isFraud": [0, 1] * 10})
     X_train.to_csv(paths["train_features"], index=False)
     X_test.to_csv(paths["test_features"], index=False)
     y_train.to_csv(paths["train_target"], index=False)
@@ -108,6 +108,7 @@ def test_training_writes_manifest_and_binary_integer_predictions(trained_artifac
     assert set(manifest) == {
         "model_hash",
         "preprocessor_hash",
+        "input_columns",
         "sklearn_version",
         "trained_at",
     }
@@ -122,7 +123,7 @@ def test_training_writes_manifest_and_binary_integer_predictions(trained_artifac
 
 def test_build_model_uses_balanced_class_weight():
     """
-    Regression guard: an unweighted RandomForest silently optimizes as if
+    Regression guard: an unweighted model silently optimizes as if
     fraud and non-fraud cost the same to misclassify. class_weight=
     "balanced" must stay configured -- the wrong default doesn't error,
     it just quietly trains a worse fraud detector.
@@ -151,7 +152,7 @@ def test_evaluate_model_reports_binary_averaged_metrics_and_pr_auc():
     X_test = pd.DataFrame({"feature": rng.normal(size=n_test)})
     y_test = pd.Series((rng.random(n_test) < 0.10).astype(int))
 
-    model = RandomForestClassifier(**RANDOM_FOREST_PARAMS)
+    model = HistGradientBoostingClassifier(**MODEL_PARAMS)
     model.fit(X_train, y_train)
 
     metrics = training.evaluate_model(model, X_test, y_test)
@@ -167,6 +168,19 @@ def test_evaluate_model_reports_binary_averaged_metrics_and_pr_auc():
     assert expected_binary_f1 != pytest.approx(expected_weighted_f1)
     assert "pr_auc" in metrics
     assert 0.0 <= metrics["pr_auc"] <= 1.0
+
+
+def test_recall_at_alert_budget_counts_fraud_in_top_scores():
+    y = np.array([1, 0, 0, 0, 1, 0, 0, 0, 0, 0] * 10)  # 20 fraud in 100
+    scores = np.where(y == 1, 0.9, 0.1)
+    # top 1% of 100 = 1 alert -> catches 1 of 20 fraud
+    assert training.recall_at_alert_budget(y, scores, 0.01) == pytest.approx(1 / 20)
+    # top 20% = 20 alerts, all fraud -> catches everything
+    assert training.recall_at_alert_budget(y, scores, 0.20) == pytest.approx(1.0)
+
+
+def test_recall_at_alert_budget_is_zero_when_no_fraud():
+    assert training.recall_at_alert_budget(np.zeros(10), np.arange(10.0), 0.1) == 0.0
 
 
 def test_training_fails_without_processed_inputs(tmp_path, monkeypatch):
