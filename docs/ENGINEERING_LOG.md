@@ -866,7 +866,7 @@ packages, with no code change since the Sep 4 green runs. New CVEs were
 published against existing pins in the interim.
 
 **Decision.** Bumped to the fixed versions Trivy reported: `mlflow`,
-`mlflow-skinny`, `mlflow-tracing` 3.17.0; `pillow` 13.0.0; `anyio` 4.14.2;
+`mlflow-skinny`, `mlflow-tracing` 3.17.2; `pillow` 13.0.0; `anyio` 4.14.2;
 `GitPython` 3.2.1; `urllib3` 2.8.0; `pyasn1` 0.6.5; `certifi` 2026.10.18;
 `aiohttp` 3.14.4; `graphql-core` 3.2.12. `aiohttp` 3.14.4 requires
 `yarl>=1.25.1`, so `yarl` moved to 1.25.1 as well.
